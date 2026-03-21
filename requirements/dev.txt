@@ -1,0 +1,11 @@
+-r base.txt
+pytest>=8.0
+pytest-django>=4.8
+pytest-cov>=5.0
+factory-boy>=3.3
+faker>=24.0
+black>=24.0
+isort>=5.13
+flake8>=7.0
+pre-commit>=3.6
+freezegun>=1.4
