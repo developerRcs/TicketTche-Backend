@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# Env files — NUNCA commitar segredos reais
+.env
+.envs/.env.local
+.envs/.env.staging
+.envs/.env.prod
+# Apenas os .example são permitidos no repositório:
+!.envs/.env.staging.example
+!.envs/.env.prod.example
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+coverage.xml
+
+# Docker volumes
+postgres_data/
+redis_data/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Root-level env files with real secrets
+.env.prod
+.env.staging
+.env.local

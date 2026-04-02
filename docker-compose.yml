@@ -1,0 +1,96 @@
+# =============================================================================
+# docker-compose.yml — LOCAL DEVELOPMENT
+# Usage: docker compose up
+# =============================================================================
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-tickettche_local}
+      POSTGRES_USER: ${DB_USER:-tickettche}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-tickettche_local_pass}
+    volumes:
+      - postgres_local_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tickettche} -d ${DB_NAME:-tickettche_local}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      target: dev
+    restart: unless-stopped
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+      - media_local:/app/media
+    ports:
+      - "8000:8000"
+    env_file: .envs/.env.local
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.local
+      RUN_MIGRATIONS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery:
+    build:
+      context: .
+      target: dev
+    restart: unless-stopped
+    command: celery -A config worker -l info -Q default,celery
+    volumes:
+      - .:/app
+    env_file: .envs/.env.local
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.local
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: .
+      target: dev
+    restart: unless-stopped
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    volumes:
+      - .:/app
+    env_file: .envs/.env.local
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.local
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_local_data:
+  media_local:

@@ -1,0 +1,68 @@
+{% extends "orders/emails/base_email.html" %}
+
+{% block content %}
+  <h1 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#111827;">Pagamento não processado</h1>
+
+  <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.5;">
+    Olá, <strong>{{ first_name }}</strong>!
+  </p>
+
+  <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6;">
+    Infelizmente, seu pagamento para <strong>{{ event_title }}</strong> não foi processado.
+  </p>
+
+  <!-- Order details -->
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f9fafb;border-radius:6px;margin-bottom:24px;">
+    <tr>
+      <td style="padding:20px 24px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="padding:6px 0;font-size:13px;color:#6b7280;width:50%;">Pedido</td>
+            <td style="padding:6px 0;font-size:13px;color:#111827;font-weight:600;text-align:right;">{{ reference }}</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;font-size:13px;color:#6b7280;">Valor</td>
+            <td style="padding:6px 0;font-size:13px;color:#111827;font-weight:600;text-align:right;">R$ {{ grand_total }}</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;font-size:13px;color:#6b7280;">Forma de pagamento</td>
+            <td style="padding:6px 0;font-size:13px;color:#111827;font-weight:600;text-align:right;">{{ payment_method }}</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;font-size:13px;color:#6b7280;">Tentativas</td>
+            <td style="padding:6px 0;font-size:13px;color:#111827;font-weight:600;text-align:right;">{{ payment_attempts }} de {{ max_attempts }}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  {% if attempts_exceeded %}
+    <!-- Limit reached -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fef2f2;border-left:4px solid #ef4444;border-radius:4px;margin-bottom:24px;">
+      <tr>
+        <td style="padding:16px 20px;">
+          <p style="margin:0;font-size:14px;color:#991b1b;line-height:1.5;">
+            Você atingiu o limite de tentativas. Entre em contato com o suporte para obter ajuda.
+          </p>
+        </td>
+      </tr>
+    </table>
+  {% else %}
+    <!-- CTA button -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+      <tr>
+        <td align="center">
+          <a href="{{ retry_url }}"
+             style="display:inline-block;background-color:#7c3aed;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:14px 36px;border-radius:6px;">
+            Tentar Novamente
+          </a>
+        </td>
+      </tr>
+    </table>
+  {% endif %}
+
+  <p style="margin:0;font-size:13px;color:#9ca3af;text-align:center;line-height:1.5;">
+    Caso tenha dúvidas, entre em contato com nosso suporte.
+  </p>
+{% endblock %}
