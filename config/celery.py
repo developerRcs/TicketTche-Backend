@@ -26,4 +26,8 @@ app.conf.beat_schedule = {
         "task": "apps.withdrawals.tasks.process_pending_withdrawals",
         "schedule": crontab(minute=0),  # every hour
     },
+    "poll-processing-withdrawals": {
+        "task": "apps.withdrawals.tasks.poll_processing_withdrawals",
+        "schedule": crontab(minute="*/15"),  # every 15 minutes
+    },
 }

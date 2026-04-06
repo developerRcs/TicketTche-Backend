@@ -52,6 +52,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             _validate_cpf(formatted)
         except Exception as e:
             raise serializers.ValidationError(str(e))
+        if CustomUser.objects.filter(cpf=formatted).exists():
+            raise serializers.ValidationError("Este CPF já está cadastrado.")
         return formatted
 
     def validate(self, attrs):
@@ -105,3 +107,19 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "date_joined",
         ]
         read_only_fields = ["id", "date_joined", "full_name"]
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, validators=[validate_password])
+    new_password_confirm = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["new_password_confirm"]:
+            raise serializers.ValidationError({"new_password": "As senhas não conferem."})
+        return attrs
+

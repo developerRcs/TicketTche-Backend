@@ -7,10 +7,18 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from apps.audit.services import log_action
-from apps.core.throttling import LoginRateThrottle, RegisterRateThrottle, TokenRefreshRateThrottle, ChangePasswordRateThrottle
+from apps.core.throttling import ChangePasswordRateThrottle, LoginRateThrottle, PasswordResetRateThrottle, RegisterRateThrottle, TokenRefreshRateThrottle
 
 from .models import CustomUser
-from .serializers import ChangePasswordSerializer, RegisterSerializer, SocialAuthSerializer, UserSerializer
+from .password_reset import confirm_password_reset, request_password_reset, validate_reset_token
+from .serializers import (
+    ChangePasswordSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
+    RegisterSerializer,
+    SocialAuthSerializer,
+    UserSerializer,
+)
 from .services import change_password
 
 
@@ -249,3 +257,54 @@ class ChangePasswordView(APIView):
             new_password=serializer.validated_data["new_password"],
         )
         return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
+
+
+class PasswordResetRequestView(APIView):
+    """POST /api/v1/auth/password-reset/request/ — solicita link de recuperação."""
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_classes = [PasswordResetRateThrottle]
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        request_password_reset(email=serializer.validated_data["email"])
+        # Sempre retorna 200 para não revelar se email existe
+        return Response(
+            {"detail": "Se este email estiver cadastrado, você receberá as instruções em breve."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetValidateView(APIView):
+    """GET /api/v1/auth/password-reset/validate/{token}/ — verifica se token é válido."""
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def get(self, request, token):
+        if validate_reset_token(token):
+            return Response({"valid": True}, status=status.HTTP_200_OK)
+        return Response(
+            {"valid": False, "detail": "Link inválido ou expirado."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """POST /api/v1/auth/password-reset/confirm/ — confirma nova senha."""
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_classes = [PasswordResetRateThrottle]
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        confirm_password_reset(
+            token=serializer.validated_data["token"],
+            new_password=serializer.validated_data["new_password"],
+        )
+        log_action(action="password_reset", actor=None, target=None, request=request)
+        return Response(
+            {"detail": "Senha redefinida com sucesso. Um código de confirmação foi enviado ao seu email."},
+            status=status.HTTP_200_OK,
+        )

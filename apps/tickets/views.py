@@ -168,3 +168,39 @@ class TicketCheckInView(APIView):
                 return Response(ticket_info(ticket, valid=False, error=msg), status=status.HTTP_400_BAD_REQUEST)
             except Ticket.DoesNotExist:
                 return Response({"valid": False, "error": "Ingresso não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+class TransferInviteView(APIView):
+    """Resolve opaque invite token → return transfer context for frontend."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, token):
+        import json
+        from django.core.cache import cache
+
+        raw = cache.get(f"ticket:transfer:invite:{token}")
+        if not raw:
+            return Response(
+                {"detail": "Convite inválido ou expirado."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        data = json.loads(raw)
+        transfer_id = data.get("transfer_id")
+
+        try:
+            transfer = TicketTransfer.objects.select_related(
+                "ticket__event", "from_user"
+            ).get(id=transfer_id)
+        except TicketTransfer.DoesNotExist:
+            return Response(
+                {"detail": "Transferência não encontrada."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response({
+            "to_email": transfer.to_email,
+            "event_title": transfer.ticket.event.title,
+            "sender_name": transfer.from_user.first_name or transfer.from_user.email,
+            "transfer_id": str(transfer.id),
+            "status": transfer.status,
+        })

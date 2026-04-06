@@ -31,12 +31,16 @@ urlpatterns = [
 
 if settings.DEBUG:
     from .debug_views import (
-        DebugCreateTicketView,
         DebugCreateInviteTokenView,
+        DebugCreateTicketView,
+        DebugRegisterView,
+        DebugTokenView,
         DebugTransferCodeView,
     )
 
     urlpatterns += [
+        path("debug/register/", DebugRegisterView.as_view(), name="debug_register"),
+        path("debug/token/", DebugTokenView.as_view(), name="debug_token"),
         path("debug/create-ticket/", DebugCreateTicketView.as_view(), name="debug_create_ticket"),
         path("debug/transfer/<uuid:pk>/code/", DebugTransferCodeView.as_view(), name="debug_transfer_code"),
         path("debug/transfer/<uuid:pk>/invite-token/", DebugCreateInviteTokenView.as_view(), name="debug_invite_token"),

@@ -1,4 +1,11 @@
+import json
+import secrets
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 from rest_framework import serializers
 
 from apps.audit.services import log_action
@@ -297,48 +304,52 @@ def confirm_transfer_by_owner(transfer_id, confirmation_code, owner_user, reques
     transfer.owner_confirmed = True
     transfer.save(update_fields=["owner_confirmed"])
 
-    ticket = transfer.ticket
+    # Generate opaque invite token stored in Redis
+    frontend_url = getattr(settings, "FRONTEND_URL", "https://tickettche.com.br")
+    invite_token = secrets.token_urlsafe(32)
+    cache.set(
+        f"ticket:transfer:invite:{invite_token}",
+        json.dumps({"transfer_id": str(transfer.id), "to_email": transfer.to_email}),
+        timeout=48 * 3600,
+    )
+    invite_url = f"{frontend_url}/aceitar-ingresso/{invite_token}"
+
     receiver_exists = User.objects.filter(email=transfer.to_email).exists()
 
-    try:
-        if receiver_exists:
-            send_mail(
-                subject=f"TicketTchê — Você recebeu uma transferência de ingresso",
-                message=(
-                    f"Olá,\n\n"
-                    f"{owner_user.first_name} quer te transferir o ingresso para "
-                    f"\"{ticket.event.title}\".\n\n"
-                    f"Valor combinado: R$ {transfer.agreed_price}\n\n"
-                    f"Acesse sua conta para aceitar ou recusar a transferência.\n\n"
-                    f"TicketTchê"
-                ),
-                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@tickettche.com.br"),
-                recipient_list=[transfer.to_email],
-                fail_silently=True,
-            )
-        else:
-            send_mail(
-                subject=f"TicketTchê — Você foi convidado a receber um ingresso",
-                message=(
-                    f"Olá,\n\n"
-                    f"Você foi convidado por {owner_user.first_name} para receber o ingresso "
-                    f"para \"{ticket.event.title}\".\n\n"
-                    f"Valor combinado: R$ {transfer.agreed_price}\n\n"
-                    f"Crie sua conta no TicketTchê para aceitar e usar seu ingresso:\n"
-                    f"https://tickettche.com.br/register\n\n"
-                    f"TicketTchê"
-                ),
-                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@tickettche.com.br"),
-                recipient_list=[transfer.to_email],
-                fail_silently=True,
-            )
-    except Exception:
-        pass
+    context = {
+        "sender_name": owner_user.first_name or owner_user.email,
+        "event_title": transfer.ticket.event.title,
+        "agreed_price": transfer.agreed_price,
+        "invite_url": invite_url,
+        "to_email": transfer.to_email,
+    }
+
+    if receiver_exists:
+        subject = "TicketTchê — Você recebeu uma transferência de ingresso"
+        template_name = "tickets/emails/transfer_notification.html"
+    else:
+        subject = "TicketTchê — Você foi convidado a receber um ingresso"
+        template_name = "tickets/emails/transfer_invitation.html"
+
+    html_content = render_to_string(template_name, context)
+    text_content = (
+        f"{context['sender_name']} quer te transferir um ingresso para {context['event_title']}.\n"
+        f"Acesse: {invite_url}"
+    )
+
+    email = EmailMultiAlternatives(
+        subject=subject,
+        body=text_content,
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@tickettche.com.br"),
+        to=[transfer.to_email],
+    )
+    email.attach_alternative(html_content, "text/html")
+    email.send(fail_silently=True)
 
     log_action(
         action="ticket_transfer_owner_confirmed",
         actor=owner_user,
-        target=ticket,
+        target=transfer.ticket,
         metadata={"to_email": transfer.to_email, "receiver_exists": receiver_exists},
         request=request,
     )

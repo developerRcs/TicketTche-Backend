@@ -158,6 +158,15 @@ def process_withdrawal(withdrawal_id: str):
     return withdrawal
 
 
+# Mapeamento dos tipos de chave PIX do sistema para o formato esperado pela API do MP
+_PIX_KEY_TYPE_MAP = {
+    "cpf": "CPF",
+    "email": "EMAIL",
+    "phone": "PHONE",
+    "random": "EVP",  # Chave aleatória = EVP (Endereço Virtual de Pagamento)
+}
+
+
 def _send_pix_transfer(amount: Decimal, pix_key: str, pix_key_type: str, reference: str) -> str:
     """
     Send money to an organizer via Mercado Pago PIX bank transfer.
@@ -182,9 +191,12 @@ def _send_pix_transfer(amount: Decimal, pix_key: str, pix_key_type: str, referen
         )
         return f"MANUAL-{reference[:8]}"
 
+    # Converte tipo de chave para o formato da API do MP (maiúsculo / EVP)
+    mp_pix_key_type = _PIX_KEY_TYPE_MAP.get(pix_key_type, pix_key_type.upper())
+
     logger.info(
-        "PIX transfer via MP — amount=R$%s key=%s (%s) ref=%s env=%s",
-        amount, pix_key, pix_key_type, reference,
+        "PIX transfer via MP — amount=R$%s key=%s (%s→%s) ref=%s env=%s",
+        amount, pix_key, pix_key_type, mp_pix_key_type, reference,
         "sandbox" if is_sandbox else "production",
     )
 
@@ -199,9 +211,12 @@ def _send_pix_transfer(amount: Decimal, pix_key: str, pix_key_type: str, referen
             "transaction_amount": float(amount),
             "description": f"TicketTchê - Saque {reference}",
             "external_reference": reference,
+            "payment_method": {
+                "id": "pix",
+            },
             "receiver": {
-                "type": pix_key_type,
-                "number": pix_key,
+                "pix_key": pix_key,
+                "pix_key_type": mp_pix_key_type,
             },
         },
         timeout=30,
@@ -219,3 +234,66 @@ def _send_pix_transfer(amount: Decimal, pix_key: str, pix_key_type: str, referen
     transfer_id = str(data.get("id", ""))
     logger.info("MP bank transfer created: id=%s ref=%s", transfer_id, reference)
     return transfer_id
+
+
+def poll_transfer_status(withdrawal_id: str) -> None:
+    """
+    Query Mercado Pago for the current status of a PROCESSING withdrawal
+    and update to COMPLETED or FAILED accordingly.
+
+    Called by the periodic Celery task `poll_processing_withdrawals`.
+    """
+    import requests
+    from django.conf import settings
+
+    try:
+        withdrawal = Withdrawal.objects.get(pk=withdrawal_id, status=Withdrawal.Status.PROCESSING)
+    except Withdrawal.DoesNotExist:
+        return
+
+    if not withdrawal.mp_transfer_id or withdrawal.mp_transfer_id.startswith("MANUAL-"):
+        # Manual transfer — não há como consultar no MP; deixa para a equipe financeira
+        logger.info(
+            "poll_transfer_status: withdrawal %s is manual (transfer_id=%s), skipping",
+            withdrawal_id, withdrawal.mp_transfer_id,
+        )
+        return
+
+    token: str = getattr(settings, "MP_ACCESS_TOKEN", "")
+    if not (token.startswith("TEST-") or token.startswith("APP_USR-")):
+        return  # Sem credenciais reais, nada a fazer
+
+    try:
+        response = requests.get(
+            f"https://api.mercadopago.com/v1/account/bank_transfers/{withdrawal.mp_transfer_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        data = response.json() if response.ok else {}
+    except Exception as exc:
+        logger.warning("poll_transfer_status: HTTP error for withdrawal %s: %s", withdrawal_id, exc)
+        return
+
+    mp_status = data.get("status", "")
+
+    if mp_status in ("approved", "settled"):
+        withdrawal.status = Withdrawal.Status.COMPLETED
+        withdrawal.processed_at = timezone.now()
+        withdrawal.save(update_fields=["status", "processed_at", "updated_at"])
+        logger.info("Withdrawal COMPLETED: id=%s mp_transfer=%s", withdrawal_id, withdrawal.mp_transfer_id)
+
+    elif mp_status in ("rejected", "cancelled", "refunded", "expired"):
+        withdrawal.status = Withdrawal.Status.FAILED
+        withdrawal.failure_reason = f"MP transfer status: {mp_status}"
+        withdrawal.processed_at = timezone.now()
+        withdrawal.save(update_fields=["status", "failure_reason", "processed_at", "updated_at"])
+        logger.warning(
+            "Withdrawal FAILED: id=%s mp_transfer=%s mp_status=%s",
+            withdrawal_id, withdrawal.mp_transfer_id, mp_status,
+        )
+
+    else:
+        logger.debug(
+            "poll_transfer_status: withdrawal %s still in progress (mp_status=%s)",
+            withdrawal_id, mp_status,
+        )

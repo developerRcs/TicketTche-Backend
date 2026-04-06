@@ -1,0 +1,21 @@
+{% extends "orders/emails/base_email.html" %}
+{% block content %}
+<h2 style="color:#7c3aed; margin:0 0 16px;">Você recebeu um ingresso! 🎟️</h2>
+<p style="font-size:16px; color:#374151;">
+  <strong>{{ sender_name }}</strong> quer te transferir um ingresso:
+</p>
+<div style="background:#f9fafb; border-radius:8px; padding:16px; margin:16px 0;">
+  <p style="margin:4px 0; font-size:15px;"><strong>Evento:</strong> {{ event_title }}</p>
+  {% if agreed_price %}
+  <p style="margin:4px 0; font-size:15px;"><strong>Valor:</strong> R$ {{ agreed_price }}</p>
+  {% endif %}
+</div>
+<p style="font-size:14px; color:#6b7280;">Clique no botão abaixo para aceitar ou recusar a transferência:</p>
+<div style="text-align:center; margin:24px 0;">
+  <a href="{{ invite_url }}" 
+     style="background:#7c3aed; color:white; padding:12px 32px; border-radius:8px; text-decoration:none; font-weight:600; font-size:16px; display:inline-block;">
+    Ver transferência
+  </a>
+</div>
+<p style="font-size:12px; color:#9ca3af; text-align:center;">Este link expira em 48 horas.</p>
+{% endblock %}

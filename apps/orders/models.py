@@ -58,6 +58,11 @@ class Order(models.Model):
     pix_qr_code = models.TextField(blank=True)
     pix_qr_code_base64 = models.TextField(blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
+    reminder_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp do último e-mail de lembrete enviado. Impede spam de reenvios.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 

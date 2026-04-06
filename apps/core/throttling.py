@@ -33,3 +33,9 @@ class CheckoutRateThrottle(UserRateThrottle):
     """Limit checkout creation to prevent order spam."""
     rate = "30/hour"
     scope = "checkout"
+
+
+class PasswordResetRateThrottle(AnonRateThrottle):
+    """Limit password reset requests to prevent email spam — 3/hour per IP."""
+    rate = "3/hour"
+    scope = "password_reset"

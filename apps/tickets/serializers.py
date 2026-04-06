@@ -38,6 +38,7 @@ class TicketSerializer(serializers.ModelSerializer):
 
 class TicketTransferSerializer(serializers.ModelSerializer):
     ticket = serializers.UUIDField(source="ticket.id", read_only=True)
+    ticket_event_title = serializers.CharField(source="ticket.event.title", read_only=True)
     from_user = serializers.UUIDField(source="from_user.id", read_only=True)
     from_user_email = serializers.EmailField(source="from_user.email", read_only=True)
 
@@ -46,6 +47,7 @@ class TicketTransferSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "ticket",
+            "ticket_event_title",
             "from_user",
             "from_user_email",
             "to_email",

@@ -5,6 +5,9 @@ from .views import (
     LoginView,
     LogoutView,
     MeView,
+    PasswordResetConfirmView,
+    PasswordResetRequestView,
+    PasswordResetValidateView,
     RegisterView,
     SocialAuthView,
     TokenRefreshCookieView,
@@ -18,4 +21,8 @@ urlpatterns = [
     path("me/", MeView.as_view(), name="me"),
     path("change-password/", ChangePasswordView.as_view(), name="change_password"),
     path("social/", SocialAuthView.as_view(), name="social_auth"),
+    # Recuperação de senha
+    path("password-reset/request/", PasswordResetRequestView.as_view(), name="password_reset_request"),
+    path("password-reset/validate/<str:token>/", PasswordResetValidateView.as_view(), name="password_reset_validate"),
+    path("password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password_reset_confirm"),
 ]
