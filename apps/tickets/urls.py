@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.urls import path
 
 from .views import (
@@ -11,6 +12,7 @@ from .views import (
     RejectTransferView,
     TicketCheckInView,
     TicketDetailView,
+    TransferInviteView,
 )
 
 urlpatterns = [
@@ -24,4 +26,18 @@ urlpatterns = [
     path("transfers/<uuid:pk>/cancel/", CancelTransferView.as_view(), name="cancel_transfer"),
     path("transfers/<uuid:pk>/confirm-owner/", ConfirmTransferByOwnerView.as_view(), name="confirm_transfer_owner"),
     path("transfers/<uuid:pk>/confirm-payment/", ConfirmTransferPaymentView.as_view(), name="confirm_transfer_payment"),
+    path("transfer-invite/<str:token>/", TransferInviteView.as_view(), name="transfer_invite"),
 ]
+
+if settings.DEBUG:
+    from .debug_views import (
+        DebugCreateTicketView,
+        DebugCreateInviteTokenView,
+        DebugTransferCodeView,
+    )
+
+    urlpatterns += [
+        path("debug/create-ticket/", DebugCreateTicketView.as_view(), name="debug_create_ticket"),
+        path("debug/transfer/<uuid:pk>/code/", DebugTransferCodeView.as_view(), name="debug_transfer_code"),
+        path("debug/transfer/<uuid:pk>/invite-token/", DebugCreateInviteTokenView.as_view(), name="debug_invite_token"),
+    ]
