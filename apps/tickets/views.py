@@ -128,6 +128,15 @@ class TicketCheckInView(APIView):
         from .services import check_in_ticket
 
         def ticket_info(ticket, valid, error=None):
+            raw_cpf = getattr(ticket.owner, "cpf", "") or ""
+            raw_cpf = raw_cpf.strip()
+            if len(raw_cpf) == 14:  # "000.000.000-00"
+                masked_cpf = f"***.{raw_cpf[4:7]}.{raw_cpf[8:11]}-**"
+            elif len(raw_cpf) == 11:  # "00000000000" raw digits
+                masked_cpf = f"***.{raw_cpf[3:6]}.{raw_cpf[6:9]}-**"
+            else:
+                masked_cpf = "***"
+
             data = {
                 "valid": valid,
                 "id": str(ticket.id),
@@ -135,6 +144,7 @@ class TicketCheckInView(APIView):
                 "ticket_type": ticket.ticket_type.name,
                 "holder_name": ticket.owner.full_name,
                 "holder_email": ticket.owner.email,
+                "holder_cpf": masked_cpf,
                 "status": ticket.status,
                 "checked_in_at": ticket.checked_in_at.isoformat() if ticket.checked_in_at else None,
             }
