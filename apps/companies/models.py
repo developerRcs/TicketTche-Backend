@@ -27,6 +27,31 @@ class Company(models.Model):
         null=True,
         blank=True,
     )
+    responsible_cnpj = models.CharField(
+        max_length=18,
+        verbose_name="CNPJ do responsável",
+        null=True,
+        blank=True,
+    )
+    pix_key = models.CharField(
+        max_length=255,
+        verbose_name="Chave PIX",
+        null=True,
+        blank=True,
+    )
+    pix_key_type = models.CharField(
+        max_length=20,
+        choices=[
+            ("cpf", "CPF"),
+            ("cnpj", "CNPJ"),
+            ("email", "E-mail"),
+            ("phone", "Telefone"),
+            ("random", "Chave aleatória"),
+        ],
+        verbose_name="Tipo de chave PIX",
+        null=True,
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

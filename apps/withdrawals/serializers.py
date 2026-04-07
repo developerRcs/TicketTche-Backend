@@ -44,7 +44,7 @@ class WithdrawalSerializer(serializers.ModelSerializer):
 class WithdrawalCreateSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal("10.00"))
     pix_key = serializers.CharField(max_length=255)
-    pix_key_type = serializers.ChoiceField(choices=["cpf", "email", "phone", "random"])
+    pix_key_type = serializers.ChoiceField(choices=["cpf", "cnpj", "email", "phone", "random"])
 
 
 class BalanceSerializer(serializers.Serializer):

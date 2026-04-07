@@ -8,13 +8,14 @@ from .models import Company, CompanyMember
 User = get_user_model()
 
 
-def create_company(name, owner, description="", logo=None, responsible_cpf=None, request=None):
+def create_company(name, owner, description="", logo=None, responsible_cpf=None, responsible_cnpj=None, request=None):
     company = Company.objects.create(
         name=name,
         owner=owner,
         description=description,
         logo=logo,
         responsible_cpf=responsible_cpf,
+        responsible_cnpj=responsible_cnpj,
     )
     CompanyMember.objects.create(
         user=owner,

@@ -28,6 +28,7 @@ class Withdrawal(models.Model):
         max_length=20,
         choices=[
             ("cpf", "CPF"),
+            ("cnpj", "CNPJ"),
             ("email", "E-mail"),
             ("phone", "Telefone"),
             ("random", "Chave aleatória"),
