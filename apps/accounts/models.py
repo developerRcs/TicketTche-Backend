@@ -5,7 +5,7 @@ from django.db import models
 from django.utils import timezone
 
 from apps.core.image_optimizer import optimize_image
-from apps.core.validators import ImageFileValidator, validate_cpf
+from apps.core.validators import ImageFileValidator, validate_cnpj, validate_cpf
 
 from .managers import CustomUserManager
 
@@ -27,6 +27,15 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         validators=[validate_cpf],
         verbose_name="CPF",
         help_text="CPF no formato 000.000.000-00",
+        null=True,
+        blank=True,
+    )
+    cnpj = models.CharField(
+        max_length=18,
+        unique=True,
+        validators=[validate_cnpj],
+        verbose_name="CNPJ",
+        help_text="CNPJ no formato 00.000.000/0000-00",
         null=True,
         blank=True,
     )

@@ -32,6 +32,35 @@ def validate_cpf(value: str) -> None:
     if remainder != int(cpf[10]):
         raise ValidationError("CPF inválido.")
 
+
+def validate_cnpj(value: str) -> None:
+    """Validate Brazilian CNPJ. Accepts '00.000.000/0000-00' or '00000000000000'."""
+    cnpj = re.sub(r'[^0-9]', '', value)
+
+    if len(cnpj) != 14:
+        raise ValidationError("CNPJ deve ter 14 dígitos.")
+
+    # Reject all-same sequences
+    if cnpj == cnpj[0] * 14:
+        raise ValidationError("CNPJ inválido.")
+
+    # First check digit
+    weights1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    total = sum(int(cnpj[i]) * weights1[i] for i in range(12))
+    remainder = total % 11
+    first_digit = 0 if remainder < 2 else 11 - remainder
+    if first_digit != int(cnpj[12]):
+        raise ValidationError("CNPJ inválido.")
+
+    # Second check digit
+    weights2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    total = sum(int(cnpj[i]) * weights2[i] for i in range(13))
+    remainder = total % 11
+    second_digit = 0 if remainder < 2 else 11 - remainder
+    if second_digit != int(cnpj[13]):
+        raise ValidationError("CNPJ inválido.")
+
+
 ALLOWED_IMAGE_TYPES = {"jpeg", "png", "webp"}
 # Limite do arquivo original enviado pelo usuário (antes de otimização)
 # Após otimização o arquivo real no R2 será muito menor
