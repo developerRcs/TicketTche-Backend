@@ -57,12 +57,15 @@ class TestAcceptTransfer:
             ticket=ticket,
             from_user=owner,
             to_email=to_user.email,
+            owner_confirmed=True,  # owner must confirm before recipient can accept
         )
         result = accept_transfer(transfer.pk, to_user)
+        # accept_transfer marks the transfer as accepted but does NOT change
+        # ticket ownership yet — that happens in confirm_transfer_payment
         assert result.status == TicketTransfer.Status.ACCEPTED
         ticket.refresh_from_db()
-        assert ticket.owner == to_user
-        assert ticket.status == Ticket.Status.ACTIVE
+        assert ticket.owner == owner  # still original owner until payment is confirmed
+        assert ticket.status == Ticket.Status.PENDING_TRANSFER
 
     def test_accept_transfer_not_found(self):
         user = UserFactory()

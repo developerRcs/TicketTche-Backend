@@ -68,6 +68,24 @@ class SocialAuthView(APIView):
 
     def _verify_google(self, token, http_requests):
         try:
+            # Step 1: validate the token audience (prevents confused deputy attack)
+            google_client_id = settings.GOOGLE_CLIENT_ID
+            if not google_client_id:
+                return None  # refuse auth when audience validation is not configured
+
+            tokeninfo_resp = http_requests.get(
+                "https://www.googleapis.com/oauth2/v3/tokeninfo",
+                params={"access_token": token},
+                timeout=10,
+            )
+            if tokeninfo_resp.status_code != 200:
+                return None
+            tokeninfo = tokeninfo_resp.json()
+            # aud or azp must match our client_id
+            if tokeninfo.get("aud") != google_client_id and tokeninfo.get("azp") != google_client_id:
+                return None
+
+            # Step 2: fetch user profile
             resp = http_requests.get(
                 "https://www.googleapis.com/oauth2/v3/userinfo",
                 headers={"Authorization": f"Bearer {token}"},
@@ -86,6 +104,29 @@ class SocialAuthView(APIView):
 
     def _verify_facebook(self, token, http_requests):
         try:
+            facebook_app_id = settings.FACEBOOK_APP_ID
+            facebook_app_secret = settings.FACEBOOK_APP_SECRET
+            if not facebook_app_id or not facebook_app_secret:
+                return None  # refuse auth when audience validation is not configured
+
+            # Step 1: validate token's app via debug_token (prevents confused deputy)
+            debug_resp = http_requests.get(
+                "https://graph.facebook.com/debug_token",
+                params={
+                    "input_token": token,
+                    "access_token": f"{facebook_app_id}|{facebook_app_secret}",
+                },
+                timeout=10,
+            )
+            if debug_resp.status_code != 200:
+                return None
+            debug_data = debug_resp.json().get("data", {})
+            if not debug_data.get("is_valid"):
+                return None
+            if str(debug_data.get("app_id")) != str(facebook_app_id):
+                return None
+
+            # Step 2: fetch user profile
             resp = http_requests.get(
                 "https://graph.facebook.com/me",
                 params={"fields": "id,email,first_name,last_name", "access_token": token},

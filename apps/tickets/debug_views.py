@@ -170,8 +170,12 @@ class DebugCreateTicketView(APIView):
             status=Ticket.Status.ACTIVE,
         )
 
-        # Build the check-in QR code content: "{ticket_uuid}:{SECRET_KEY[:8]}"
-        check_in_code = f"{ticket.id}:{settings.SECRET_KEY[:8]}"
+        # Build the check-in QR code content using HMAC-SHA256 (same as production)
+        import hashlib
+        import hmac as hmac_module
+        signing_key = settings.QR_SIGNING_KEY.encode()
+        signature = hmac_module.new(signing_key, str(ticket.id).encode(), hashlib.sha256).hexdigest()[:16]
+        check_in_code = f"{ticket.id}:{signature}"
 
         return Response(
             {

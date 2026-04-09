@@ -105,6 +105,7 @@ class TestAcceptTransfer:
             ticket=ticket,
             from_user=user,
             to_email=to_user.email,
+            owner_confirmed=True,  # owner must confirm before recipient can accept
         )
         client = APIClient()
         client.force_authenticate(user=to_user)

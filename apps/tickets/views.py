@@ -113,6 +113,8 @@ class TicketCheckInView(APIView):
     """
 
     def post(self, request):
+        import hashlib
+        import hmac as hmac_module
         from django.conf import settings
         from rest_framework.exceptions import ValidationError as DRFValidationError
 
@@ -121,8 +123,12 @@ class TicketCheckInView(APIView):
         if len(parts) != 2:
             return Response({"valid": False, "error": "QR code inválido."}, status=status.HTTP_400_BAD_REQUEST)
 
-        ticket_id, secret = parts
-        if secret != settings.SECRET_KEY[:8]:
+        ticket_id, received_sig = parts
+        signing_key = settings.QR_SIGNING_KEY.encode()
+        expected_sig = hmac_module.new(
+            signing_key, ticket_id.encode(), hashlib.sha256
+        ).hexdigest()[:16]
+        if not hmac_module.compare_digest(expected_sig, received_sig):
             return Response({"valid": False, "error": "QR code adulterado ou inválido."}, status=status.HTTP_400_BAD_REQUEST)
 
         from .services import check_in_ticket

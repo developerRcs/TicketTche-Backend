@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import io
 import uuid
 from datetime import timedelta
@@ -49,8 +50,11 @@ class Ticket(models.Model):
 
     def generate_qr_code(self):
         import qrcode
-        secret = settings.SECRET_KEY[:8]
-        data = f"{self.id}:{secret}"
+        signing_key = settings.QR_SIGNING_KEY.encode()
+        signature = hmac.new(
+            signing_key, str(self.id).encode(), hashlib.sha256
+        ).hexdigest()[:16]
+        data = f"{self.id}:{signature}"
         qr = qrcode.QRCode(version=1, box_size=10, border=5)
         qr.add_data(data)
         qr.make(fit=True)

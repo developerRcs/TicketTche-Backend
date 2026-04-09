@@ -56,10 +56,11 @@ class TestEventList:
         for ev in response.data["results"]:
             assert ev["status"] == "published"
 
-    def test_unauthenticated_cannot_list(self, api_client):
+    def test_unauthenticated_can_list_published_events(self, api_client):
+        """Event listing is public — unauthenticated users can browse published events."""
         url = reverse("event_list")
         response = api_client.get(url)
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.status_code == status.HTTP_200_OK
 
 
 @pytest.mark.django_db

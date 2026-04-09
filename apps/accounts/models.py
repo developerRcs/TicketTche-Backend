@@ -5,7 +5,7 @@ from django.db import models
 from django.utils import timezone
 
 from apps.core.image_optimizer import optimize_image
-from apps.core.validators import validate_cpf
+from apps.core.validators import ImageFileValidator, validate_cpf
 
 from .managers import CustomUserManager
 
@@ -33,7 +33,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
-    avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
+    avatar = models.ImageField(upload_to="avatars/", null=True, blank=True, validators=[ImageFileValidator()])
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = CustomUserManager()

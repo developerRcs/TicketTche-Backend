@@ -195,6 +195,14 @@ PAYMENT_GATEWAY_CLASS = config(
     default="apps.payments.providers.mercadopago_provider.MercadoPagoGateway",
 )
 
+# QR code signing — dedicated key, never reuse SECRET_KEY for domain-specific HMACs
+QR_SIGNING_KEY = config("QR_SIGNING_KEY", default="dev-qr-signing-key-CHANGE-IN-PRODUCTION")
+
+# Social login audience validation
+GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID", default="")
+FACEBOOK_APP_ID = config("FACEBOOK_APP_ID", default="")
+FACEBOOK_APP_SECRET = config("FACEBOOK_APP_SECRET", default="")
+
 # ============================================================
 # HTTP Security Headers (active in production via env vars)
 # ============================================================
