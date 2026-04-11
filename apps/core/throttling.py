@@ -39,3 +39,15 @@ class PasswordResetRateThrottle(AnonRateThrottle):
     """Limit password reset requests to prevent email spam — 3/hour per IP."""
     rate = "3/hour"
     scope = "password_reset"
+
+
+class TransferConfirmRateThrottle(UserRateThrottle):
+    """Limit transfer confirmation attempts to prevent brute-force of 6-digit code."""
+    rate = "5/hour"
+    scope = "transfer_confirm"
+
+
+class WithdrawalRateThrottle(UserRateThrottle):
+    """Limit withdrawal requests to prevent rapid fund drainage."""
+    rate = "5/day"
+    scope = "withdrawal"

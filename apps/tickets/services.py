@@ -298,8 +298,20 @@ def confirm_transfer_by_owner(transfer_id, confirmation_code, owner_user, reques
     if transfer.expires_at < timezone.now():
         raise serializers.ValidationError({"transfer_id": "Esta transferência expirou."})
 
+    # SECURITY: Brute-force protection — max 5 attempts per transfer
+    attempts_key = f"transfer_confirm_attempts:{transfer_id}"
+    attempts = cache.get(attempts_key, 0)
+    if attempts >= 5:
+        raise serializers.ValidationError(
+            {"confirmation_code": "Número máximo de tentativas excedido. Cancele e inicie uma nova transferência."}
+        )
+
     if transfer.confirmation_code != str(confirmation_code).strip():
+        cache.set(attempts_key, attempts + 1, timeout=3600)  # 1 hour TTL
         raise serializers.ValidationError({"confirmation_code": "Código de confirmação inválido."})
+
+    # Reset attempts on success
+    cache.delete(attempts_key)
 
     transfer.owner_confirmed = True
     transfer.save(update_fields=["owner_confirmed"])
@@ -358,9 +370,17 @@ def confirm_transfer_by_owner(transfer_id, confirmation_code, owner_user, reques
 
 def confirm_transfer_payment(transfer_id, accepting_user, request=None):
     """
-    Receiver confirms that payment was made to the original owner.
-    This finalizes the transfer: ticket ownership changes and ticket becomes ACTIVE.
+    Finalizes a transfer after acceptance.
+
+    SECURITY: For PAID transfers (agreed_price > 0), this endpoint is BLOCKED.
+    Paid transfers must go through the platform's MercadoPago payment flow to
+    prevent attackers from claiming tickets without actually paying.
+
+    For FREE transfers (gifts with no agreed_price), this directly transfers
+    the ticket ownership.
     """
+    from decimal import Decimal
+
     try:
         transfer = TicketTransfer.objects.select_related("ticket").get(
             pk=transfer_id, to_email=accepting_user.email
@@ -376,6 +396,15 @@ def confirm_transfer_payment(transfer_id, accepting_user, request=None):
     if transfer.payment_confirmed:
         raise serializers.ValidationError({"transfer_id": "Pagamento já confirmado."})
 
+    # SECURITY FIX (FINDING-002): Block self-attested payment for paid transfers
+    if transfer.agreed_price is not None and transfer.agreed_price > Decimal("0.00"):
+        raise serializers.ValidationError({
+            "transfer_id": (
+                "Transferências pagas devem ser processadas pelo gateway de pagamento "
+                "da plataforma. O pagamento será verificado automaticamente."
+            )
+        })
+
     transfer.payment_confirmed = True
     transfer.save(update_fields=["payment_confirmed"])
 
@@ -388,7 +417,7 @@ def confirm_transfer_payment(transfer_id, accepting_user, request=None):
         action="ticket_transfer_payment_confirmed",
         actor=accepting_user,
         target=ticket,
-        metadata={"transfer_id": str(transfer_id)},
+        metadata={"transfer_id": str(transfer_id), "is_free_transfer": True},
         request=request,
     )
     return transfer

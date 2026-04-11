@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 WITHDRAWAL_HOLD_DAYS = 7
 MINIMUM_WITHDRAWAL = Decimal("10.00")
+MAXIMUM_SINGLE_WITHDRAWAL = Decimal("2000.00")
+DAILY_WITHDRAWAL_LIMIT = Decimal("5000.00")
 
 
 def get_company_balance(company_id: str) -> dict:
@@ -84,6 +86,7 @@ def get_company_balance(company_id: str) -> dict:
 def request_withdrawal(company, user, amount: Decimal, pix_key: str, pix_key_type: str):
     """
     Create a new withdrawal request after validating amount against available balance.
+    SECURITY (FINDING-013): Daily limit, per-request cap, and audit logging.
     """
     balance = get_company_balance(str(company.id))
 
@@ -92,12 +95,41 @@ def request_withdrawal(company, user, amount: Decimal, pix_key: str, pix_key_typ
             {"amount": f"Valor mínimo para saque é R${MINIMUM_WITHDRAWAL}."}
         )
 
+    if amount > MAXIMUM_SINGLE_WITHDRAWAL:
+        raise drf_serializers.ValidationError(
+            {"amount": f"Valor máximo por saque é R${MAXIMUM_SINGLE_WITHDRAWAL}. Para valores maiores, entre em contato com o suporte."}
+        )
+
     if amount > balance["available_balance"]:
         raise drf_serializers.ValidationError(
             {
                 "amount": (
                     f"Saldo disponível insuficiente. "
                     f"Disponível: R${balance['available_balance']:.2f}."
+                )
+            }
+        )
+
+    # SECURITY FIX (FINDING-013): Daily withdrawal limit
+    today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_total = (
+        Withdrawal.objects.filter(
+            company=company,
+            created_at__gte=today_start,
+            status__in=[
+                Withdrawal.Status.PENDING,
+                Withdrawal.Status.PROCESSING,
+                Withdrawal.Status.COMPLETED,
+            ],
+        ).aggregate(s=Sum("amount"))["s"]
+        or Decimal("0.00")
+    )
+    if daily_total + amount > DAILY_WITHDRAWAL_LIMIT:
+        raise drf_serializers.ValidationError(
+            {
+                "amount": (
+                    f"Limite diário de saques é R${DAILY_WITHDRAWAL_LIMIT}. "
+                    f"Já solicitado hoje: R${daily_total:.2f}."
                 )
             }
         )
@@ -112,11 +144,12 @@ def request_withdrawal(company, user, amount: Decimal, pix_key: str, pix_key_typ
     )
 
     logger.info(
-        "Withdrawal requested: id=%s company=%s amount=%s user=%s",
+        "Withdrawal requested: id=%s company=%s amount=%s user=%s daily_total=%s",
         withdrawal.id,
         company.id,
         amount,
         user.email,
+        daily_total + amount,
     )
 
     return withdrawal

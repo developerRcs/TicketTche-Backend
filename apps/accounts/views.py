@@ -34,7 +34,10 @@ class SocialAuthView(APIView):
 
         provider = serializer.validated_data["provider"]
         token = serializer.validated_data["token"]
-        role = serializer.validated_data.get("role", "customer")
+        # SECURITY FIX (FINDING-009): Always force 'customer' role for social login.
+        # Role escalation (to organizer/admin) must be done through admin approval.
+        # The 'role' field from the request is intentionally IGNORED.
+        role = "customer"
 
         user_info = self._verify_google(token, http_requests) if provider == "google" else self._verify_facebook(token, http_requests)
 

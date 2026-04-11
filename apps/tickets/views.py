@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.pagination import StandardPagination
+from apps.core.throttling import TransferConfirmRateThrottle
 
 from .models import Ticket, TicketTransfer
 from .permissions import IsTicketOwner
@@ -82,6 +83,8 @@ class PendingTransfersView(generics.ListAPIView):
 
 
 class ConfirmTransferByOwnerView(APIView):
+    throttle_classes = [TransferConfirmRateThrottle]
+
     def post(self, request, pk):
         serializer = ConfirmTransferByOwnerSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -95,6 +98,8 @@ class ConfirmTransferByOwnerView(APIView):
 
 
 class ConfirmTransferPaymentView(APIView):
+    throttle_classes = [TransferConfirmRateThrottle]
+
     def post(self, request, pk):
         transfer = confirm_transfer_payment(
             transfer_id=pk,

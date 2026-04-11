@@ -127,6 +127,6 @@ class TicketTransfer(models.Model):
         if not self.expires_at:
             self.expires_at = timezone.now() + timedelta(hours=48)
         if not self.confirmation_code:
-            import random
-            self.confirmation_code = str(random.randint(100000, 999999))
+            import secrets
+            self.confirmation_code = str(secrets.randbelow(900000) + 100000)
         super().save(*args, **kwargs)

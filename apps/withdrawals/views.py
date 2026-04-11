@@ -43,8 +43,12 @@ class CompanyBalanceView(APIView):
         return Response(serializer.data)
 
 
+from apps.core.throttling import WithdrawalRateThrottle
+
+
 class WithdrawalListCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [WithdrawalRateThrottle]
 
     def get(self, request, company_id):
         company = _get_company_or_403(company_id, request.user)

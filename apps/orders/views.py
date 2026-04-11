@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.throttling import CheckoutRateThrottle, PaymentRateThrottle
+from apps.accounts.permissions import IsAdminOrSuperAdmin
 
 from apps.core.pagination import StandardPagination
 
@@ -67,6 +68,10 @@ class CheckoutView(APIView):
 
 
 class ConfirmOrderView(APIView):
+    # SECURITY FIX (FINDING-004): Only admins can manually confirm orders.
+    # Normal users must pay through MercadoPago (process_payment + webhook).
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrSuperAdmin]
+
     def post(self, request, pk):
         serializer = ConfirmOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -111,28 +116,39 @@ class MPWebhookView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        # Validate MercadoPago HMAC signature in production
+        # SECURITY FIX (FINDING-005): Always require webhook secret in production.
+        # Fail CLOSED: if secret is not configured, reject ALL webhooks.
         webhook_secret = settings.MP_WEBHOOK_SECRET
-        if webhook_secret:
-            import hashlib
-            import hmac
-            ts = request.headers.get("x-request-id", "")
-            signature_header = request.headers.get("x-signature", "")
-            # MP signature format: "ts=<timestamp>,v1=<hash>"
-            received_hash = ""
-            for part in signature_header.split(","):
-                if part.startswith("v1="):
-                    received_hash = part[3:]
-            manifest = f"id:{request.data.get('data', {}).get('id', '')};request-id:{ts};"
-            expected = hmac.new(
-                webhook_secret.encode(),
-                manifest.encode(),
-                hashlib.sha256,
-            ).hexdigest()
-            if not hmac.compare_digest(expected, received_hash):
-                return Response({"error": "Invalid signature"}, status=400)
+        if not webhook_secret:
+            return Response(
+                {"error": "Webhook signature validation not configured."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        mp_order_id = request.data.get("data", {}).get("id") or request.query_params.get("id")
+        import hashlib
+        import hmac
+
+        ts = request.headers.get("x-request-id", "")
+        signature_header = request.headers.get("x-signature", "")
+        # MP signature format: "ts=<timestamp>,v1=<hash>"
+        received_hash = ""
+        for part in signature_header.split(","):
+            if part.strip().startswith("v1="):
+                received_hash = part.strip()[3:]
+
+        # SECURITY FIX (FINDING-012): Only accept data ID from body, never from query params
+        body_data = request.data.get("data", {})
+        mp_order_id = body_data.get("id") if isinstance(body_data, dict) else None
+
+        manifest = f"id:{body_data.get('id', '') if isinstance(body_data, dict) else ''};request-id:{ts};"
+        expected = hmac.new(
+            webhook_secret.encode(),
+            manifest.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(expected, received_hash):
+            return Response({"error": "Invalid signature"}, status=status.HTTP_403_FORBIDDEN)
+
         if mp_order_id:
-            handle_mp_webhook(mp_order_id)
+            handle_mp_webhook(str(mp_order_id))
         return Response({"ok": True})
