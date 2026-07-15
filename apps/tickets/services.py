@@ -21,10 +21,9 @@ def get_user_tickets(user, status=None):
     )
     if status:
         qs = qs.filter(status=status)
-    else:
-        # Default: only show active tickets (payment confirmed)
-        qs = qs.filter(status__in=["active", "pending_transfer"])
-    return qs
+    # Sem filtro: todos os ingressos do usuário, cada um com seu status
+    # (usados/transferidos/cancelados fazem parte do histórico)
+    return qs.order_by("-created_at")
 
 
 def get_transfer(pk):

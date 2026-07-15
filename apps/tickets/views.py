@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -112,8 +113,12 @@ class ConfirmTransferPaymentView(APIView):
 class TicketCheckInView(APIView):
     """
     POST /api/v1/tickets/check-in/
-    Body: { "code": "<ticket_uuid>:<secret8>" }
-    Validates the QR code, marks the ticket as used, and returns holder info.
+    Body: { "code": "<ticket_uuid>:<secret8>", "confirm": bool }
+
+    confirm=false (default): valida assinatura/permissão/status e retorna os
+    dados do portador SEM marcar o ingresso como usado — o staff confere o
+    CPF pessoalmente antes de confirmar.
+    confirm=true: efetiva o check-in (marca como usado).
     Only organizers/staff of the event company (or admins) can use this.
     """
 
@@ -162,6 +167,51 @@ class TicketCheckInView(APIView):
             if error:
                 data["error"] = error
             return data
+
+        confirm = bool(request.data.get("confirm"))
+
+        if not confirm:
+            # Pré-visualização: nenhuma mudança de estado
+            from apps.companies.models import CompanyMember
+            from apps.events.models import Event as EventModel
+
+            try:
+                ticket = Ticket.objects.select_related(
+                    "event__company", "owner", "ticket_type"
+                ).get(pk=ticket_id)
+            except (Ticket.DoesNotExist, ValueError, DjangoValidationError):
+                return Response(
+                    {"valid": False, "error": "Ingresso não encontrado."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Mesma regra de permissão do check-in: sem vínculo com a empresa,
+            # nenhum PII do portador é retornado
+            if request.user.role not in ("super_admin", "admin"):
+                if not CompanyMember.objects.filter(
+                    user=request.user, company=ticket.event.company
+                ).exists():
+                    return Response(
+                        {"valid": False, "error": "Sem permissão para validar ingressos deste evento."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+            if ticket.event.status == EventModel.Status.CANCELLED:
+                return Response(
+                    ticket_info(ticket, valid=False, error="Evento cancelado — check-in não permitido."),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if ticket.status == Ticket.Status.USED:
+                return Response(
+                    ticket_info(ticket, valid=False, error="Ingresso já utilizado."),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if ticket.status != Ticket.Status.ACTIVE:
+                return Response(
+                    ticket_info(ticket, valid=False, error="Ingresso não está ativo."),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response(ticket_info(ticket, valid=True))
 
         try:
             ticket = check_in_ticket(ticket_id, request.user, request)
