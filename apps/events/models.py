@@ -46,6 +46,11 @@ class Event(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            # public listing filters (EventFilter: status/city/date range)
+            models.Index(fields=["status", "start_date"]),
+            models.Index(fields=["city"]),
+        ]
 
     def __str__(self):
         return self.title

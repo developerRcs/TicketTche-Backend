@@ -7,8 +7,9 @@ from .models import CustomUser
 def register_user(email, first_name, last_name, password, role="customer", **kwargs):
     if CustomUser.objects.filter(email=email).exists():
         raise serializers.ValidationError({"email": "Já existe um usuário com este email."})
-    allowed_roles = {CustomUser.Role.CUSTOMER, CustomUser.Role.ORGANIZER}
-    user_role = role if role in allowed_roles else CustomUser.Role.CUSTOMER
+    # Self-registration is always customer; organizer is granted by
+    # create_company, admin roles only by a super admin.
+    user_role = CustomUser.Role.CUSTOMER
     user = CustomUser.objects.create_user(
         email=email,
         first_name=first_name,

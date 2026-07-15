@@ -78,7 +78,7 @@ class ConfirmOrderView(APIView):
         order = confirm_order(
             order_id=pk,
             payment_ref=serializer.validated_data["payment_ref"],
-            buyer=request.user,
+            actor=request.user,
             request=request,
         )
         return Response(OrderSerializer(order).data)
@@ -128,19 +128,26 @@ class MPWebhookView(APIView):
         import hashlib
         import hmac
 
-        ts = request.headers.get("x-request-id", "")
         signature_header = request.headers.get("x-signature", "")
         # MP signature format: "ts=<timestamp>,v1=<hash>"
+        ts = ""
         received_hash = ""
         for part in signature_header.split(","):
-            if part.strip().startswith("v1="):
-                received_hash = part.strip()[3:]
+            part = part.strip()
+            if part.startswith("ts="):
+                ts = part[3:]
+            elif part.startswith("v1="):
+                received_hash = part[3:]
 
-        # SECURITY FIX (FINDING-012): Only accept data ID from body, never from query params
-        body_data = request.data.get("data", {})
-        mp_order_id = body_data.get("id") if isinstance(body_data, dict) else None
+        request_id = request.headers.get("x-request-id", "")
+        # MP signs the data.id sent in the query string (lowercased when alphanumeric).
+        # The signature covers this value, so it is safe to trust once validated.
+        data_id = str(request.query_params.get("data.id", "")).lower()
 
-        manifest = f"id:{body_data.get('id', '') if isinstance(body_data, dict) else ''};request-id:{ts};"
+        if not ts or not received_hash or not data_id:
+            return Response({"error": "Invalid signature"}, status=status.HTTP_403_FORBIDDEN)
+
+        manifest = f"id:{data_id};request-id:{request_id};ts:{ts};"
         expected = hmac.new(
             webhook_secret.encode(),
             manifest.encode(),
@@ -149,6 +156,5 @@ class MPWebhookView(APIView):
         if not hmac.compare_digest(expected, received_hash):
             return Response({"error": "Invalid signature"}, status=status.HTTP_403_FORBIDDEN)
 
-        if mp_order_id:
-            handle_mp_webhook(str(mp_order_id))
+        handle_mp_webhook(data_id)
         return Response({"ok": True})

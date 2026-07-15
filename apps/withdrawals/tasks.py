@@ -15,7 +15,8 @@ def _acquire_lock(cache, lock_key: str) -> bool:
 @shared_task
 def process_pending_withdrawals():
     """
-    Hourly task: attempt to process any withdrawal still in PENDING state.
+    Hourly task: send the PIX transfer for withdrawals APPROVED by a platform
+    admin. PENDING (not yet reviewed) withdrawals are never paid automatically.
 
     Uses a Redis lock to prevent concurrent executions (e.g. if a task
     runs longer than the beat interval).
@@ -32,7 +33,7 @@ def process_pending_withdrawals():
 
     try:
         pending_ids = list(
-            Withdrawal.objects.filter(status=Withdrawal.Status.PENDING)
+            Withdrawal.objects.filter(status=Withdrawal.Status.APPROVED)
             .values_list("id", flat=True)
         )
 

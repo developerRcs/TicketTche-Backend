@@ -55,22 +55,44 @@ def sync_ticket_types(event, ticket_types_data: list):
     - Items with an 'id' → update existing
     - Items without 'id' → create new
     - Existing types not in the submitted list → delete (if no sold tickets)
+
+    quantity can never drop below quantity_sold (would corrupt availability
+    and allow overselling). Rows are locked so a concurrent checkout can't
+    increment quantity_sold between the check and the update.
     """
+    from django.db import transaction
+    from rest_framework import serializers as drf_serializers
+
     submitted_ids = {str(tt["id"]) for tt in ticket_types_data if tt.get("id")}
 
-    # Delete removed types that have no sold tickets
-    for tt in TicketType.objects.filter(event=event).exclude(id__in=submitted_ids):
-        if tt.quantity_sold == 0:
-            tt.delete()
+    with transaction.atomic():
+        # Delete removed types that have no sold tickets
+        for tt in TicketType.objects.select_for_update().filter(event=event).exclude(id__in=submitted_ids):
+            if tt.quantity_sold == 0:
+                tt.delete()
 
-    for tt_data in ticket_types_data:
-        tt_data = dict(tt_data)
-        tt_id = tt_data.pop("id", None)
+        for tt_data in ticket_types_data:
+            tt_data = dict(tt_data)
+            tt_id = tt_data.pop("id", None)
 
-        if tt_id:
-            TicketType.objects.filter(id=tt_id, event=event).update(**tt_data)
-        else:
-            TicketType.objects.create(event=event, **tt_data)
+            if tt_id:
+                try:
+                    existing = TicketType.objects.select_for_update().get(id=tt_id, event=event)
+                except TicketType.DoesNotExist:
+                    continue
+                new_quantity = tt_data.get("quantity", existing.quantity)
+                if new_quantity < existing.quantity_sold:
+                    raise drf_serializers.ValidationError(
+                        {
+                            "ticket_types": (
+                                f"Ingresso '{existing.name}': quantidade ({new_quantity}) não pode ser "
+                                f"menor que a já vendida ({existing.quantity_sold})."
+                            )
+                        }
+                    )
+                TicketType.objects.filter(id=tt_id, event=event).update(**tt_data)
+            else:
+                TicketType.objects.create(event=event, **tt_data)
 
 
 def update_event(event, updated_by=None, request=None, **kwargs):

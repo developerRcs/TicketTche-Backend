@@ -43,7 +43,8 @@ class MercadoPagoGateway(PaymentGateway):
             return PaymentStatus.APPROVED
         if status in ("rejected", "cancelled"):
             return PaymentStatus.REJECTED
-        if status == "refunded":
+        # charged_back: money already clawed back from the account — treat as refund
+        if status in ("refunded", "charged_back"):
             return PaymentStatus.REFUNDED
         return PaymentStatus.PENDING
 
@@ -136,6 +137,15 @@ class MercadoPagoGateway(PaymentGateway):
             reference=data.get("external_reference", ""),
             raw_response=data,
         )
+
+    def cancel_payment(self, gateway_id: str) -> bool:
+        resp = http_client.put(
+            f"{MP_API_BASE}/v1/payments/{gateway_id}",
+            headers=self._headers(),
+            json={"status": "cancelled"},
+            timeout=30,
+        )
+        return resp.status_code in (200, 201)
 
     def refund_payment(self, gateway_id: str, amount: Optional[Decimal] = None) -> RefundResponse:
         body = {}

@@ -50,6 +50,17 @@ def initiate_transfer(ticket_id, to_email, from_user, agreed_price=None, request
         if ticket.status != Ticket.Status.ACTIVE:
             raise serializers.ValidationError({"ticket_id": "O ingresso não está ativo."})
 
+        from django.utils import timezone as tz
+        from apps.events.models import Event as EventModel
+        if ticket.event.end_date and ticket.event.end_date < tz.now():
+            raise serializers.ValidationError(
+                {"ticket_id": "Não é possível transferir ingresso de evento já encerrado."}
+            )
+        if ticket.event.status == EventModel.Status.CANCELLED:
+            raise serializers.ValidationError(
+                {"ticket_id": "Não é possível transferir ingresso de evento cancelado."}
+            )
+
         if TicketTransfer.objects.filter(ticket=ticket, status=TicketTransfer.Status.PENDING).exists():
             raise serializers.ValidationError(
                 {"ticket_id": "Já existe uma transferência pendente para este ingresso."}
@@ -124,27 +135,32 @@ def initiate_transfer(ticket_id, to_email, from_user, agreed_price=None, request
 
 
 def accept_transfer(transfer_id, accepting_user, request=None):
-    try:
-        transfer = TicketTransfer.objects.get(pk=transfer_id, to_email=accepting_user.email)
-    except TicketTransfer.DoesNotExist:
-        raise serializers.ValidationError({"transfer_id": "Transfer not found."})
+    from django.db import transaction
 
-    if transfer.status != TicketTransfer.Status.PENDING:
-        raise serializers.ValidationError({"transfer_id": "Transfer is not pending."})
+    with transaction.atomic():
+        try:
+            transfer = TicketTransfer.objects.select_for_update().get(
+                pk=transfer_id, to_email=accepting_user.email
+            )
+        except TicketTransfer.DoesNotExist:
+            raise serializers.ValidationError({"transfer_id": "Transfer not found."})
 
-    if not transfer.owner_confirmed:
-        raise serializers.ValidationError(
-            {"transfer_id": "O dono do ingresso ainda não confirmou a transferência."}
-        )
+        if transfer.status != TicketTransfer.Status.PENDING:
+            raise serializers.ValidationError({"transfer_id": "Transfer is not pending."})
 
-    from django.utils import timezone
-    if transfer.expires_at < timezone.now():
-        raise serializers.ValidationError({"transfer_id": "Transfer has expired."})
+        if not transfer.owner_confirmed:
+            raise serializers.ValidationError(
+                {"transfer_id": "O dono do ingresso ainda não confirmou a transferência."}
+            )
 
-    # Don't change ticket ownership here — it happens in confirm_transfer_payment
-    # Don't change ticket status here — keep it PENDING_TRANSFER until payment
-    transfer.status = TicketTransfer.Status.ACCEPTED
-    transfer.save(update_fields=["status"])
+        from django.utils import timezone
+        if transfer.expires_at < timezone.now():
+            raise serializers.ValidationError({"transfer_id": "Transfer has expired."})
+
+        # Don't change ticket ownership here — it happens in confirm_transfer_payment
+        # Don't change ticket status here — keep it PENDING_TRANSFER until payment
+        transfer.status = TicketTransfer.Status.ACCEPTED
+        transfer.save(update_fields=["status"])
 
     log_action(
         action="ticket_transfer_accept",
@@ -156,20 +172,25 @@ def accept_transfer(transfer_id, accepting_user, request=None):
 
 
 def reject_transfer(transfer_id, rejecting_user, request=None):
-    try:
-        transfer = TicketTransfer.objects.get(pk=transfer_id, to_email=rejecting_user.email)
-    except TicketTransfer.DoesNotExist:
-        raise serializers.ValidationError({"transfer_id": "Transfer not found."})
+    from django.db import transaction
 
-    if transfer.status != TicketTransfer.Status.PENDING:
-        raise serializers.ValidationError({"transfer_id": "Transfer is not pending."})
+    with transaction.atomic():
+        try:
+            transfer = TicketTransfer.objects.select_for_update().get(
+                pk=transfer_id, to_email=rejecting_user.email
+            )
+        except TicketTransfer.DoesNotExist:
+            raise serializers.ValidationError({"transfer_id": "Transfer not found."})
 
-    ticket = transfer.ticket
-    ticket.status = Ticket.Status.ACTIVE
-    ticket.save(update_fields=["status"])
+        if transfer.status != TicketTransfer.Status.PENDING:
+            raise serializers.ValidationError({"transfer_id": "Transfer is not pending."})
 
-    transfer.status = TicketTransfer.Status.REJECTED
-    transfer.save(update_fields=["status"])
+        ticket = transfer.ticket
+        ticket.status = Ticket.Status.ACTIVE
+        ticket.save(update_fields=["status"])
+
+        transfer.status = TicketTransfer.Status.REJECTED
+        transfer.save(update_fields=["status"])
 
     log_action(
         action="ticket_transfer_reject",
@@ -198,17 +219,26 @@ def check_in_ticket(ticket_id, staff_user, request=None):
         except Ticket.DoesNotExist:
             raise serializers.ValidationError({"ticket_id": "Ticket not found."})
 
-        # Verify staff_user belongs to the event's company
+        # Verify staff_user belongs to the event's company.
+        # PermissionDenied (not ValidationError) so the check-in view's fallback
+        # never returns the holder's PII to staff of another company.
         from apps.companies.models import CompanyMember
+        from rest_framework.exceptions import PermissionDenied
 
         if not staff_user.role in ("super_admin", "admin"):
             if not CompanyMember.objects.filter(
                 user=staff_user,
                 company=ticket.event.company,
             ).exists():
-                raise serializers.ValidationError(
-                    {"detail": "You are not authorized to check in tickets for this event."}
+                raise PermissionDenied(
+                    "You are not authorized to check in tickets for this event."
                 )
+
+        from apps.events.models import Event as EventModel
+        if ticket.event.status == EventModel.Status.CANCELLED:
+            raise serializers.ValidationError(
+                {"ticket_id": "Evento cancelado — check-in não permitido."}
+            )
 
         if ticket.status == Ticket.Status.USED:
             raise serializers.ValidationError(
@@ -246,20 +276,25 @@ def check_in_ticket(ticket_id, staff_user, request=None):
 
 
 def cancel_transfer(transfer_id, cancelling_user, request=None):
-    try:
-        transfer = TicketTransfer.objects.get(pk=transfer_id, from_user=cancelling_user)
-    except TicketTransfer.DoesNotExist:
-        raise serializers.ValidationError({"transfer_id": "Transfer not found."})
+    from django.db import transaction
 
-    if transfer.status != TicketTransfer.Status.PENDING:
-        raise serializers.ValidationError({"transfer_id": "Transfer is not pending."})
+    with transaction.atomic():
+        try:
+            transfer = TicketTransfer.objects.select_for_update().get(
+                pk=transfer_id, from_user=cancelling_user
+            )
+        except TicketTransfer.DoesNotExist:
+            raise serializers.ValidationError({"transfer_id": "Transfer not found."})
 
-    ticket = transfer.ticket
-    ticket.status = Ticket.Status.ACTIVE
-    ticket.save(update_fields=["status"])
+        if transfer.status != TicketTransfer.Status.PENDING:
+            raise serializers.ValidationError({"transfer_id": "Transfer is not pending."})
 
-    transfer.status = TicketTransfer.Status.CANCELLED
-    transfer.save(update_fields=["status"])
+        ticket = transfer.ticket
+        ticket.status = Ticket.Status.ACTIVE
+        ticket.save(update_fields=["status"])
+
+        transfer.status = TicketTransfer.Status.CANCELLED
+        transfer.save(update_fields=["status"])
 
     log_action(
         action="ticket_transfer_cancel",
@@ -380,38 +415,44 @@ def confirm_transfer_payment(transfer_id, accepting_user, request=None):
     the ticket ownership.
     """
     from decimal import Decimal
+    from django.db import transaction
+    from django.utils import timezone
 
-    try:
-        transfer = TicketTransfer.objects.select_related("ticket").get(
-            pk=transfer_id, to_email=accepting_user.email
-        )
-    except TicketTransfer.DoesNotExist:
-        raise serializers.ValidationError({"transfer_id": "Transferência não encontrada."})
-
-    if transfer.status != TicketTransfer.Status.ACCEPTED:
-        raise serializers.ValidationError(
-            {"transfer_id": "A transferência deve ser aceita antes de confirmar o pagamento."}
-        )
-
-    if transfer.payment_confirmed:
-        raise serializers.ValidationError({"transfer_id": "Pagamento já confirmado."})
-
-    # SECURITY FIX (FINDING-002): Block self-attested payment for paid transfers
-    if transfer.agreed_price is not None and transfer.agreed_price > Decimal("0.00"):
-        raise serializers.ValidationError({
-            "transfer_id": (
-                "Transferências pagas devem ser processadas pelo gateway de pagamento "
-                "da plataforma. O pagamento será verificado automaticamente."
+    with transaction.atomic():
+        try:
+            transfer = TicketTransfer.objects.select_for_update().select_related("ticket").get(
+                pk=transfer_id, to_email=accepting_user.email
             )
-        })
+        except TicketTransfer.DoesNotExist:
+            raise serializers.ValidationError({"transfer_id": "Transferência não encontrada."})
 
-    transfer.payment_confirmed = True
-    transfer.save(update_fields=["payment_confirmed"])
+        if transfer.status != TicketTransfer.Status.ACCEPTED:
+            raise serializers.ValidationError(
+                {"transfer_id": "A transferência deve ser aceita antes de confirmar o pagamento."}
+            )
 
-    ticket = transfer.ticket
-    ticket.owner = accepting_user
-    ticket.status = Ticket.Status.ACTIVE
-    ticket.save(update_fields=["owner", "status"])
+        if transfer.payment_confirmed:
+            raise serializers.ValidationError({"transfer_id": "Pagamento já confirmado."})
+
+        if transfer.expires_at < timezone.now():
+            raise serializers.ValidationError({"transfer_id": "Esta transferência expirou."})
+
+        # SECURITY FIX (FINDING-002): Block self-attested payment for paid transfers
+        if transfer.agreed_price is not None and transfer.agreed_price > Decimal("0.00"):
+            raise serializers.ValidationError({
+                "transfer_id": (
+                    "Transferências pagas devem ser processadas pelo gateway de pagamento "
+                    "da plataforma. O pagamento será verificado automaticamente."
+                )
+            })
+
+        transfer.payment_confirmed = True
+        transfer.save(update_fields=["payment_confirmed"])
+
+        ticket = transfer.ticket
+        ticket.owner = accepting_user
+        ticket.status = Ticket.Status.ACTIVE
+        ticket.save(update_fields=["owner", "status"])
 
     log_action(
         action="ticket_transfer_payment_confirmed",

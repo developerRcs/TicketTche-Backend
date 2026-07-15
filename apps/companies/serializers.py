@@ -14,6 +14,9 @@ class CompanySerializer(serializers.ModelSerializer):
     owner = serializers.UUIDField(source="owner.id", read_only=True)
     member_count = serializers.ReadOnlyField()
 
+    # Fields containing financial/PII data — only shown to company managers
+    SENSITIVE_FIELDS = ("responsible_cpf", "responsible_cnpj", "pix_key", "pix_key_type")
+
     class Meta:
         model = Company
         fields = [
@@ -31,7 +34,33 @@ class CompanySerializer(serializers.ModelSerializer):
             "pix_key",
             "pix_key_type",
         ]
-        read_only_fields = ["id", "slug", "created_at", "owner", "member_count"]
+        # PIX key changes must go through CompanyPixKeyView (validated + audited);
+        # is_active and responsible documents are not self-service editable.
+        read_only_fields = [
+            "id", "slug", "created_at", "owner", "member_count",
+            "is_active", "responsible_cpf", "responsible_cnpj",
+            "pix_key", "pix_key_type",
+        ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        is_manager = bool(
+            user
+            and user.is_authenticated
+            and (
+                getattr(user, "role", "") in ("admin", "super_admin")
+                or CompanyMember.objects.filter(
+                    user=user, company=instance,
+                    role__in=[CompanyMember.Role.OWNER, CompanyMember.Role.ADMIN],
+                ).exists()
+            )
+        )
+        if not is_manager:
+            for field in self.SENSITIVE_FIELDS:
+                data.pop(field, None)
+        return data
 
 
 class CompanyCreateSerializer(serializers.ModelSerializer):
@@ -124,11 +153,19 @@ class CompanyMemberSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "user", "user_email", "user_full_name", "company", "joined_at"]
 
 
+# The owner role is never assignable via invite/role-update — ownership is set
+# at company creation. Prevents admin self-promotion / owner hijack.
+ASSIGNABLE_ROLES = [
+    (CompanyMember.Role.ADMIN, "Admin"),
+    (CompanyMember.Role.STAFF, "Staff"),
+]
+
+
 class InviteMemberSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    role = serializers.ChoiceField(choices=CompanyMember.Role.choices)
+    role = serializers.ChoiceField(choices=ASSIGNABLE_ROLES)
 
 
 class UpdateMemberRoleSerializer(serializers.Serializer):
-    role = serializers.ChoiceField(choices=CompanyMember.Role.choices)
+    role = serializers.ChoiceField(choices=ASSIGNABLE_ROLES)
 

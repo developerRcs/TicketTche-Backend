@@ -130,6 +130,15 @@ class PaymentGateway(ABC):
         """
         ...
 
+    def cancel_payment(self, gateway_id: str) -> bool:
+        """
+        Cancel a pending (not yet approved) payment, e.g. an unpaid Pix QR,
+        so the payer can no longer complete it. Best-effort: providers that
+        don't support cancellation may keep this no-op.
+        Returns True if the provider confirmed the cancellation.
+        """
+        return False
+
 
 def get_gateway() -> PaymentGateway:
     """

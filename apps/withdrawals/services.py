@@ -56,11 +56,7 @@ def get_company_balance(company_id: str) -> dict:
     already_withdrawn = (
         Withdrawal.objects.filter(
             company=company,
-            status__in=[
-                Withdrawal.Status.PENDING,
-                Withdrawal.Status.PROCESSING,
-                Withdrawal.Status.COMPLETED,
-            ],
+            status__in=Withdrawal.RESERVING_STATUSES,
         ).aggregate(s=Sum("amount"))["s"]
         or Decimal("0.00")
     )
@@ -87,8 +83,11 @@ def request_withdrawal(company, user, amount: Decimal, pix_key: str, pix_key_typ
     """
     Create a new withdrawal request after validating amount against available balance.
     SECURITY (FINDING-013): Daily limit, per-request cap, and audit logging.
+
+    The company row is locked so concurrent requests can't both pass the
+    balance/daily-limit checks (TOCTOU double-withdrawal).
     """
-    balance = get_company_balance(str(company.id))
+    from django.db import transaction
 
     if amount < MINIMUM_WITHDRAWAL:
         raise drf_serializers.ValidationError(
@@ -100,48 +99,48 @@ def request_withdrawal(company, user, amount: Decimal, pix_key: str, pix_key_typ
             {"amount": f"Valor máximo por saque é R${MAXIMUM_SINGLE_WITHDRAWAL}. Para valores maiores, entre em contato com o suporte."}
         )
 
-    if amount > balance["available_balance"]:
-        raise drf_serializers.ValidationError(
-            {
-                "amount": (
-                    f"Saldo disponível insuficiente. "
-                    f"Disponível: R${balance['available_balance']:.2f}."
-                )
-            }
-        )
+    with transaction.atomic():
+        company = Company.objects.select_for_update().get(pk=company.pk)
 
-    # SECURITY FIX (FINDING-013): Daily withdrawal limit
-    today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    daily_total = (
-        Withdrawal.objects.filter(
+        balance = get_company_balance(str(company.id))
+        if amount > balance["available_balance"]:
+            raise drf_serializers.ValidationError(
+                {
+                    "amount": (
+                        f"Saldo disponível insuficiente. "
+                        f"Disponível: R${balance['available_balance']:.2f}."
+                    )
+                }
+            )
+
+        # SECURITY FIX (FINDING-013): Daily withdrawal limit
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        daily_total = (
+            Withdrawal.objects.filter(
+                company=company,
+                created_at__gte=today_start,
+                status__in=Withdrawal.RESERVING_STATUSES,
+            ).aggregate(s=Sum("amount"))["s"]
+            or Decimal("0.00")
+        )
+        if daily_total + amount > DAILY_WITHDRAWAL_LIMIT:
+            raise drf_serializers.ValidationError(
+                {
+                    "amount": (
+                        f"Limite diário de saques é R${DAILY_WITHDRAWAL_LIMIT}. "
+                        f"Já solicitado hoje: R${daily_total:.2f}."
+                    )
+                }
+            )
+
+        withdrawal = Withdrawal.objects.create(
             company=company,
-            created_at__gte=today_start,
-            status__in=[
-                Withdrawal.Status.PENDING,
-                Withdrawal.Status.PROCESSING,
-                Withdrawal.Status.COMPLETED,
-            ],
-        ).aggregate(s=Sum("amount"))["s"]
-        or Decimal("0.00")
-    )
-    if daily_total + amount > DAILY_WITHDRAWAL_LIMIT:
-        raise drf_serializers.ValidationError(
-            {
-                "amount": (
-                    f"Limite diário de saques é R${DAILY_WITHDRAWAL_LIMIT}. "
-                    f"Já solicitado hoje: R${daily_total:.2f}."
-                )
-            }
+            requested_by=user,
+            amount=amount,
+            pix_key=pix_key,
+            pix_key_type=pix_key_type,
+            status=Withdrawal.Status.PENDING,
         )
-
-    withdrawal = Withdrawal.objects.create(
-        company=company,
-        requested_by=user,
-        amount=amount,
-        pix_key=pix_key,
-        pix_key_type=pix_key_type,
-        status=Withdrawal.Status.PENDING,
-    )
 
     logger.info(
         "Withdrawal requested: id=%s company=%s amount=%s user=%s daily_total=%s",
@@ -155,20 +154,97 @@ def request_withdrawal(company, user, amount: Decimal, pix_key: str, pix_key_typ
     return withdrawal
 
 
+def approve_withdrawal(withdrawal_id: str, admin_user):
+    """Platform-admin approval. Only PENDING withdrawals can be approved;
+    the transition is atomic so two admins can't double-approve."""
+    updated = Withdrawal.objects.filter(
+        pk=withdrawal_id, status=Withdrawal.Status.PENDING
+    ).update(
+        status=Withdrawal.Status.APPROVED,
+        reviewed_by=admin_user,
+        reviewed_at=timezone.now(),
+    )
+    if not updated:
+        raise drf_serializers.ValidationError(
+            {"status": "Saque não está aguardando aprovação."}
+        )
+    withdrawal = Withdrawal.objects.get(pk=withdrawal_id)
+    logger.info(
+        "Withdrawal APPROVED: id=%s company=%s amount=%s by=%s",
+        withdrawal.id, withdrawal.company_id, withdrawal.amount, admin_user.email,
+    )
+    return withdrawal
+
+
+def reject_withdrawal(withdrawal_id: str, admin_user, reason: str = ""):
+    """Platform-admin rejection of a PENDING withdrawal. Frees the reserved amount."""
+    updated = Withdrawal.objects.filter(
+        pk=withdrawal_id, status=Withdrawal.Status.PENDING
+    ).update(
+        status=Withdrawal.Status.REJECTED,
+        failure_reason=reason or "Rejeitado pela administração.",
+        reviewed_by=admin_user,
+        reviewed_at=timezone.now(),
+        processed_at=timezone.now(),
+    )
+    if not updated:
+        raise drf_serializers.ValidationError(
+            {"status": "Saque não está aguardando aprovação."}
+        )
+    withdrawal = Withdrawal.objects.get(pk=withdrawal_id)
+    logger.info(
+        "Withdrawal REJECTED: id=%s company=%s amount=%s by=%s reason=%s",
+        withdrawal.id, withdrawal.company_id, withdrawal.amount, admin_user.email, reason,
+    )
+    return withdrawal
+
+
+def resolve_withdrawal(withdrawal_id: str, admin_user, final_status: str, reason: str = ""):
+    """Manually close a PROCESSING withdrawal (e.g. MANUAL- transfers executed
+    by the finance team outside Mercado Pago). final_status: completed | failed."""
+    if final_status not in (Withdrawal.Status.COMPLETED, Withdrawal.Status.FAILED):
+        raise drf_serializers.ValidationError(
+            {"status": "Status final deve ser 'completed' ou 'failed'."}
+        )
+    updated = Withdrawal.objects.filter(
+        pk=withdrawal_id, status=Withdrawal.Status.PROCESSING
+    ).update(
+        status=final_status,
+        failure_reason=reason if final_status == Withdrawal.Status.FAILED else "",
+        reviewed_by=admin_user,
+        reviewed_at=timezone.now(),
+        processed_at=timezone.now(),
+    )
+    if not updated:
+        raise drf_serializers.ValidationError(
+            {"status": "Saque não está em processamento."}
+        )
+    withdrawal = Withdrawal.objects.get(pk=withdrawal_id)
+    logger.info(
+        "Withdrawal manually resolved: id=%s status=%s by=%s",
+        withdrawal.id, final_status, admin_user.email,
+    )
+    return withdrawal
+
+
 def process_withdrawal(withdrawal_id: str):
     """
-    Attempt to send a PIX transfer via Mercado Pago for a PENDING withdrawal.
+    Attempt to send a PIX transfer via Mercado Pago for an APPROVED withdrawal.
+    PENDING withdrawals are never paid automatically — a platform admin must
+    approve them first (approve_withdrawal).
     Sets status to PROCESSING while the transfer is in-flight, or FAILED on error.
     A periodic Celery task polls for completion.
     """
-    try:
-        withdrawal = Withdrawal.objects.get(pk=withdrawal_id, status=Withdrawal.Status.PENDING)
-    except Withdrawal.DoesNotExist:
-        logger.warning("process_withdrawal: withdrawal %s not found or not PENDING", withdrawal_id)
+    # Atomic claim: APPROVED → PROCESSING. Prevents two workers (or a re-run
+    # of the beat task) from sending the same transfer twice.
+    claimed = Withdrawal.objects.filter(
+        pk=withdrawal_id, status=Withdrawal.Status.APPROVED
+    ).update(status=Withdrawal.Status.PROCESSING)
+    if not claimed:
+        logger.warning("process_withdrawal: withdrawal %s not found or not APPROVED", withdrawal_id)
         return None
 
-    withdrawal.status = Withdrawal.Status.PROCESSING
-    withdrawal.save(update_fields=["status", "updated_at"])
+    withdrawal = Withdrawal.objects.get(pk=withdrawal_id)
 
     try:
         transfer_id = _send_pix_transfer(

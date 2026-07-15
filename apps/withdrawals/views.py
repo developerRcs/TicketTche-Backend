@@ -4,12 +4,19 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.permissions import IsAdminOrSuperAdmin
 from apps.companies.models import Company, CompanyMember
 from apps.core.pagination import StandardPagination
 
 from .models import Withdrawal
 from .serializers import BalanceSerializer, WithdrawalCreateSerializer, WithdrawalSerializer
-from .services import get_company_balance, request_withdrawal
+from .services import (
+    approve_withdrawal,
+    get_company_balance,
+    reject_withdrawal,
+    request_withdrawal,
+    resolve_withdrawal,
+)
 
 
 def _get_company_or_403(company_id, user):
@@ -78,3 +85,45 @@ class WithdrawalListCreateView(APIView):
             WithdrawalSerializer(withdrawal).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class AdminWithdrawalListView(generics.ListAPIView):
+    """Platform-admin queue of withdrawals (filter by ?status=pending etc.)."""
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrSuperAdmin]
+    serializer_class = WithdrawalSerializer
+    pagination_class = StandardPagination
+
+    def get_queryset(self):
+        qs = Withdrawal.objects.select_related("company", "requested_by").order_by("created_at")
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
+
+
+class AdminWithdrawalApproveView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrSuperAdmin]
+
+    def post(self, request, withdrawal_id):
+        withdrawal = approve_withdrawal(str(withdrawal_id), request.user)
+        return Response(WithdrawalSerializer(withdrawal).data)
+
+
+class AdminWithdrawalRejectView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrSuperAdmin]
+
+    def post(self, request, withdrawal_id):
+        reason = str(request.data.get("reason", ""))[:500]
+        withdrawal = reject_withdrawal(str(withdrawal_id), request.user, reason)
+        return Response(WithdrawalSerializer(withdrawal).data)
+
+
+class AdminWithdrawalResolveView(APIView):
+    """Manually close a PROCESSING withdrawal (MANUAL- transfers or stuck polls)."""
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrSuperAdmin]
+
+    def post(self, request, withdrawal_id):
+        final_status = str(request.data.get("status", ""))
+        reason = str(request.data.get("reason", ""))[:500]
+        withdrawal = resolve_withdrawal(str(withdrawal_id), request.user, final_status, reason)
+        return Response(WithdrawalSerializer(withdrawal).data)

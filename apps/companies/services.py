@@ -37,6 +37,21 @@ def create_company(name, owner, description="", logo=None, responsible_cpf=None,
 
 
 def invite_member(company, email, role, invited_by=None, request=None):
+    from rest_framework import serializers
+
+    if role == CompanyMember.Role.OWNER:
+        raise serializers.ValidationError({"role": "Não é possível convidar como proprietário."})
+    if (
+        role == CompanyMember.Role.ADMIN
+        and invited_by is not None
+        and getattr(invited_by, "role", "") not in ("admin", "super_admin")
+        and not CompanyMember.objects.filter(
+            user=invited_by, company=company, role=CompanyMember.Role.OWNER
+        ).exists()
+    ):
+        raise serializers.ValidationError(
+            {"role": "Apenas o proprietário pode convidar administradores."}
+        )
     try:
         user = User.objects.get(email=email)
     except User.DoesNotExist:
@@ -56,7 +71,34 @@ def invite_member(company, email, role, invited_by=None, request=None):
     return member
 
 
+def _require_can_manage_role(company, actor, target_member, new_role=None):
+    """Owner memberships are immutable here, and only the owner (or a platform
+    admin) can grant/revoke the admin role. Company admins manage staff only."""
+    from rest_framework import serializers
+
+    if target_member.role == CompanyMember.Role.OWNER:
+        raise serializers.ValidationError(
+            {"member": "O proprietário da empresa não pode ser alterado ou removido."}
+        )
+
+    if actor is None or getattr(actor, "role", "") in ("admin", "super_admin"):
+        return
+
+    actor_is_owner = CompanyMember.objects.filter(
+        user=actor, company=company, role=CompanyMember.Role.OWNER
+    ).exists()
+    touches_admin = (
+        target_member.role == CompanyMember.Role.ADMIN
+        or new_role == CompanyMember.Role.ADMIN
+    )
+    if touches_admin and not actor_is_owner:
+        raise serializers.ValidationError(
+            {"role": "Apenas o proprietário pode gerenciar administradores."}
+        )
+
+
 def update_member_role(member, role, updated_by=None, request=None):
+    _require_can_manage_role(member.company, updated_by, member, new_role=role)
     member.role = role
     member.save(update_fields=["role"])
     log_action(
@@ -70,6 +112,7 @@ def update_member_role(member, role, updated_by=None, request=None):
 
 
 def remove_member(member, removed_by=None, request=None):
+    _require_can_manage_role(member.company, removed_by, member)
     log_action(
         action="company_member_remove",
         actor=removed_by,

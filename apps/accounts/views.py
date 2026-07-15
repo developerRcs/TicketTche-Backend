@@ -97,6 +97,10 @@ class SocialAuthView(APIView):
             if resp.status_code != 200:
                 return None
             data = resp.json()
+            # Reject unverified emails — prevents linking to an existing account
+            # by asserting an email the attacker does not actually control.
+            if str(data.get("email_verified", "")).lower() not in ("true", "1"):
+                return None
             return {
                 "email": data.get("email"),
                 "first_name": data.get("given_name", ""),

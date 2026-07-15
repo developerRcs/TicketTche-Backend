@@ -5,7 +5,10 @@ from .models import Event, TicketType
 
 
 class TicketTypeSerializer(serializers.ModelSerializer):
-    price = serializers.DecimalField(max_digits=10, decimal_places=2, coerce_to_string=True)
+    price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, coerce_to_string=True, min_value=0
+    )
+    quantity = serializers.IntegerField(min_value=1)
     quantity_available = serializers.ReadOnlyField()
 
     class Meta:
@@ -29,7 +32,7 @@ class TicketTypeUpdateSerializer(serializers.Serializer):
     id = serializers.UUIDField(required=False, allow_null=True)
     name = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True, default="")
-    price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0)
     quantity = serializers.IntegerField(min_value=1)
     sale_start = serializers.DateTimeField(required=False, allow_null=True, default=None)
     sale_end = serializers.DateTimeField(required=False, allow_null=True, default=None)
@@ -109,6 +112,20 @@ class EventCreateSerializer(serializers.ModelSerializer):
         """Sanitize HTML in event description to prevent XSS attacks."""
         return sanitize_html(value) if value else value
 
+    def validate(self, data):
+        start = data.get("start_date")
+        end = data.get("end_date")
+        if start and end and end <= start:
+            raise serializers.ValidationError(
+                {"end_date": "Data de término deve ser posterior à data de início."}
+            )
+        for tt in data.get("ticket_types", []):
+            if tt.get("sale_start") and tt.get("sale_end") and tt["sale_end"] <= tt["sale_start"]:
+                raise serializers.ValidationError(
+                    {"ticket_types": f"Ingresso '{tt.get('name', '')}': fim das vendas deve ser após o início."}
+                )
+        return data
+
 
 class EventUpdateSerializer(serializers.ModelSerializer):
     """Used for PATCH/PUT on existing events. Supports ticket type sync."""
@@ -134,6 +151,13 @@ class EventUpdateSerializer(serializers.ModelSerializer):
         return sanitize_html(value) if value else value
 
     def validate(self, data):
+        start = data.get("start_date") or (self.instance.start_date if self.instance else None)
+        end = data.get("end_date") or (self.instance.end_date if self.instance else None)
+        if start and end and end <= start:
+            raise serializers.ValidationError(
+                {"end_date": "Data de término deve ser posterior à data de início."}
+            )
+
         capacity = data.get("capacity") or (self.instance.capacity if self.instance else None)
         ticket_types = data.get("ticket_types")
         if capacity and ticket_types:
@@ -142,6 +166,12 @@ class EventUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "ticket_types": f"Total de ingressos ({total}) excede a capacidade do evento ({capacity})."
                 })
+        if ticket_types:
+            for tt in ticket_types:
+                if tt.get("sale_start") and tt.get("sale_end") and tt["sale_end"] <= tt["sale_start"]:
+                    raise serializers.ValidationError(
+                        {"ticket_types": f"Ingresso '{tt.get('name', '')}': fim das vendas deve ser após o início."}
+                    )
         return data
 
 

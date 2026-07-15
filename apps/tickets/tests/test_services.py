@@ -253,7 +253,8 @@ class TestCheckInTicket:
         tt = TicketTypeFactory(event=event)
         ticket = TicketFactory(event=event, ticket_type=tt, status="active")
         non_staff = UserFactory()  # not a company member
-        with pytest.raises(serializers.ValidationError):
+        from rest_framework.exceptions import PermissionDenied
+        with pytest.raises(PermissionDenied):
             check_in_ticket(str(ticket.pk), non_staff)
 
     def test_check_in_transferred_ticket(self):

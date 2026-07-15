@@ -13,5 +13,9 @@ class AuditRequestMiddleware:
 
     def __call__(self, request):
         _thread_locals.request = request
-        response = self.get_response(request)
-        return response
+        try:
+            return self.get_response(request)
+        finally:
+            # Clear per-request state so a reused worker thread can't read a
+            # stale request on a later request that hasn't set one yet.
+            _thread_locals.request = None

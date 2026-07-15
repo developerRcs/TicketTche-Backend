@@ -21,6 +21,10 @@ from apps.payments.gateway import (
 
 # Tracks when each stub Pix payment was created (gateway_id → timestamp)
 _PIX_CREATED_AT: dict[str, float] = {}
+# Tracks the charged amount so get_payment_status can report it back
+# (the amount check in orders refuses to fulfill when the paid amount is unknown)
+_PAYMENT_AMOUNT: dict[str, Decimal] = {}
+_CANCELLED: set[str] = set()
 _PIX_AUTO_APPROVE_SECONDS = 8
 
 
@@ -34,6 +38,7 @@ class StubGateway(PaymentGateway):
 
     def create_payment(self, request: PaymentRequest) -> PaymentResponse:
         gateway_id = f"stub_{uuid.uuid4().hex[:16]}"
+        _PAYMENT_AMOUNT[gateway_id] = request.amount
 
         if request.method == PaymentMethod.PIX:
             _PIX_CREATED_AT[gateway_id] = time.time()
@@ -73,7 +78,9 @@ class StubGateway(PaymentGateway):
 
     def get_payment_status(self, gateway_id: str) -> PaymentResponse:
         created_at = _PIX_CREATED_AT.get(gateway_id)
-        if created_at and (time.time() - created_at) >= _PIX_AUTO_APPROVE_SECONDS:
+        if gateway_id in _CANCELLED:
+            status = PaymentStatus.REJECTED
+        elif created_at and (time.time() - created_at) >= _PIX_AUTO_APPROVE_SECONDS:
             status = PaymentStatus.APPROVED
         else:
             status = PaymentStatus.PENDING
@@ -82,9 +89,14 @@ class StubGateway(PaymentGateway):
             gateway_id=gateway_id,
             status=status,
             method=PaymentMethod.PIX,
-            amount=Decimal("0.00"),
+            amount=_PAYMENT_AMOUNT.get(gateway_id, Decimal("0.00")),
             reference="",
         )
+
+    def cancel_payment(self, gateway_id: str) -> bool:
+        _CANCELLED.add(gateway_id)
+        _PIX_CREATED_AT.pop(gateway_id, None)
+        return True
 
     def refund_payment(self, gateway_id: str, amount: Optional[Decimal] = None) -> RefundResponse:
         return RefundResponse(

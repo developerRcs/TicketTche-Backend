@@ -52,7 +52,7 @@ class Order(models.Model):
         max_digits=12, decimal_places=2, default=Decimal("0.00"),
         help_text="total + platform_fee (amount charged to buyer)."
     )
-    mp_order_id = models.CharField(max_length=100, blank=True)
+    mp_order_id = models.CharField(max_length=100, blank=True, db_index=True)
     mp_payment_id = models.CharField(max_length=100, blank=True)
     payment_attempts = models.PositiveSmallIntegerField(default=0, help_text="Number of payment attempts made.")
     pix_qr_code = models.TextField(blank=True)
@@ -65,6 +65,13 @@ class Order(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
+
+    class Meta:
+        indexes = [
+            # expiry sweep task and per-buyer listings
+            models.Index(fields=["status", "expires_at"]),
+            models.Index(fields=["buyer", "-created_at"]),
+        ]
 
     def __str__(self):
         return self.reference

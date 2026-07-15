@@ -24,10 +24,17 @@ class EventListView(generics.ListAPIView):
     ordering = ["-created_at"]
 
     def get_queryset(self):
+        from django.db.models import Q
+
         qs = Event.objects.select_related("company").prefetch_related("ticket_types").order_by("-created_at")
-        if not self.request.user.is_authenticated:
-            qs = qs.filter(status=Event.Status.PUBLISHED)
-        return qs
+        user = self.request.user
+        if not user.is_authenticated:
+            return qs.filter(status=Event.Status.PUBLISHED)
+        if getattr(user, "role", "") in ("admin", "super_admin"):
+            return qs
+        # Drafts/cancelled events are only visible to members of the owning company
+        member_companies = CompanyMember.objects.filter(user=user).values_list("company_id", flat=True)
+        return qs.filter(Q(status=Event.Status.PUBLISHED) | Q(company__in=member_companies))
 
 
 class EventCreateView(generics.CreateAPIView):
@@ -38,6 +45,17 @@ class EventCreateView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+
+        # Events can only be created under a company the user manages
+        is_platform_admin = getattr(request.user, "role", "") in ("admin", "super_admin")
+        if not is_platform_admin and not CompanyMember.objects.filter(
+            user=request.user,
+            company=data["company"],
+            role__in=[CompanyMember.Role.OWNER, CompanyMember.Role.ADMIN],
+        ).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Você não tem permissão para criar eventos nesta empresa.")
+
         ticket_types_data = data.pop("ticket_types", [])
         event = create_event(
             creator=request.user,
@@ -80,10 +98,35 @@ class EventDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
-        if not request.user.is_authenticated and instance.status != Event.Status.PUBLISHED:
-            from rest_framework.exceptions import NotFound
-            raise NotFound()
+        if instance.status != Event.Status.PUBLISHED:
+            user = request.user
+            is_member = (
+                user.is_authenticated
+                and (
+                    getattr(user, "role", "") in ("admin", "super_admin")
+                    or CompanyMember.objects.filter(user=user, company=instance.company).exists()
+                )
+            )
+            if not is_member:
+                from rest_framework.exceptions import NotFound
+                raise NotFound()
         return super().retrieve(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        from apps.tickets.models import Ticket
+
+        if Ticket.objects.filter(event=instance).exists():
+            return Response(
+                {
+                    "detail": (
+                        "Este evento possui ingressos vendidos e não pode ser excluído. "
+                        "Cancele o evento em vez de excluí-lo."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)

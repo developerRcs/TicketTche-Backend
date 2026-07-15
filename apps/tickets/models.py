@@ -45,6 +45,13 @@ class Ticket(models.Model):
     checked_in_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            # "my tickets" listing and per-event status counts
+            models.Index(fields=["owner", "status"]),
+            models.Index(fields=["event", "status"]),
+        ]
+
     def __str__(self):
         return f"Ticket {self.id} - {self.owner.email}"
 
@@ -90,7 +97,7 @@ class TicketTransfer(models.Model):
     from_user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sent_transfers"
     )
-    to_email = models.EmailField()
+    to_email = models.EmailField(db_index=True)
     token = models.CharField(max_length=64, unique=True)
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING

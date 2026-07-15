@@ -185,8 +185,9 @@ class TestEventCoverUpload:
 @pytest.mark.django_db
 class TestEventSearchFilter:
     def test_search_filter(self, auth_client):
-        EventFactory(title="SearchableUniqueEvent")
-        EventFactory(title="OtherEvent")
+        # Drafts are only visible to company members; search must hit published events
+        EventFactory(title="SearchableUniqueEvent", status="published")
+        EventFactory(title="OtherEvent", status="published")
         url = reverse("event_list")
         response = auth_client.get(url, {"search": "SearchableUnique"})
         assert response.status_code == status.HTTP_200_OK

@@ -27,7 +27,9 @@ class UserSerializer(serializers.ModelSerializer):
             "avatar",
             "date_joined",
         ]
-        read_only_fields = ["id", "date_joined", "full_name"]
+        # role/is_active/email must never be self-editable (privilege escalation /
+        # account takeover — there is no email re-verification flow)
+        read_only_fields = ["id", "email", "role", "is_active", "date_joined", "full_name"]
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -94,14 +96,17 @@ class RegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data.pop("password_confirm")
         validated_data.pop("document_type", None)
-        role = validated_data.pop("role", "customer")
+        # Everyone registers as customer; the organizer role is granted when
+        # the user creates a company (create_company). Self-selecting a role
+        # at registration would bypass that flow.
+        validated_data.pop("role", None)
         # Remove empty strings so model doesn't receive blank instead of None
         if not validated_data.get("cpf"):
             validated_data["cpf"] = None
         if not validated_data.get("cnpj"):
             validated_data["cnpj"] = None
         from .services import register_user
-        return register_user(role=role, **validated_data)
+        return register_user(**validated_data)
 
 
 class ChangePasswordSerializer(serializers.Serializer):

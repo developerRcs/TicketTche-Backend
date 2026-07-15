@@ -73,8 +73,17 @@ class CompanyMembersView(generics.ListAPIView):
     serializer_class = CompanyMemberSerializer
 
     def get_queryset(self):
+        from rest_framework.exceptions import PermissionDenied
+
+        company_id = self.kwargs["pk"]
+        user = self.request.user
+        is_member = CompanyMember.objects.filter(
+            company_id=company_id, user=user
+        ).exists()
+        if not is_member and getattr(user, "role", "") not in ("admin", "super_admin"):
+            raise PermissionDenied("Apenas membros da empresa podem ver a equipe.")
         return CompanyMember.objects.filter(
-            company_id=self.kwargs["pk"]
+            company_id=company_id
         ).select_related("user", "company")
 
 

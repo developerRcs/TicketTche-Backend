@@ -111,13 +111,23 @@ class TestCheckout:
 
 @pytest.mark.django_db
 class TestConfirmOrder:
-    def test_confirm_order(self, auth_client, user, published_event):
-        ticket_type = published_event.ticket_types.first()
+    def test_admin_can_confirm_order(self, published_event):
+        # Manual confirmation is admin-only (FINDING-004): buyers must pay via gateway.
+        # confirm_order scopes by buyer, so the confirming admin is the order buyer here.
+        admin = UserFactory(role="admin")
+        client = APIClient()
+        client.force_authenticate(user=admin)
+        order = OrderFactory(buyer=admin, event=published_event, status="pending")
+        url = reverse("confirm_order", kwargs={"pk": order.pk})
+        response = client.post(url, {"payment_ref": "PAY123"}, format="json")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["status"] == "paid"
+
+    def test_regular_user_cannot_confirm_order(self, auth_client, user, published_event):
         order = OrderFactory(buyer=user, event=published_event, status="pending")
         url = reverse("confirm_order", kwargs={"pk": order.pk})
         response = auth_client.post(url, {"payment_ref": "PAY123"}, format="json")
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data["status"] == "paid"
+        assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
 @pytest.mark.django_db
