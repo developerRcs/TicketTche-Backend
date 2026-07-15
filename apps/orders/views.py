@@ -21,6 +21,7 @@ from .services import (
     create_checkout,
     handle_mp_webhook,
     process_payment,
+    release_pending_order,
 )
 
 
@@ -110,6 +111,18 @@ class OrderPayStatusView(APIView):
     def get(self, request, pk):
         order = check_payment_status(order_id=pk, buyer=request.user)
         return Response(OrderSerializer(order).data)
+
+
+class OrderReleaseView(APIView):
+    """Buyer abandoned checkout — release the reserved inventory immediately.
+
+    Idempotent and safe: only frees a PENDING order with no payment in flight
+    (see release_pending_order). Fired by the frontend on leaving checkout.
+    """
+
+    def post(self, request, pk):
+        release_pending_order(order_id=pk, buyer=request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class MPWebhookView(APIView):

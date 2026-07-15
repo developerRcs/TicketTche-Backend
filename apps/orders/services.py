@@ -508,3 +508,44 @@ def cancel_expired_orders():
             count += 1
 
     return count
+
+
+def release_pending_order(order_id, buyer):
+    """Release the inventory held by an abandoned checkout reservation.
+
+    Called when the buyer leaves checkout without paying. Only a PENDING order
+    with no payment in flight (payment_status == PENDING, i.e. no card submitted
+    and no Pix QR generated) is cancelled and its reserved inventory returned.
+    Orders that are already paid/failed, or that hold a Pix QR awaiting payment
+    (payment_status == PROCESSING), are left untouched — the payment webhook and
+    the 30-minute expiry sweep own those. Row-locked and idempotent, so it is
+    safe against a concurrent payment or the expiry task.
+    """
+    with transaction.atomic():
+        try:
+            order = Order.objects.select_for_update().get(pk=order_id, buyer=buyer)
+        except Order.DoesNotExist:
+            return None
+
+        if (
+            order.status != Order.Status.PENDING
+            or order.payment_status != Order.PaymentStatus.PENDING
+        ):
+            # paid, failed, cancelled, or a payment already in flight — do nothing
+            return order
+
+        for item in order.items.select_related("ticket_type").all():
+            TicketType.objects.filter(pk=item.ticket_type_id).update(
+                quantity_sold=F("quantity_sold") - item.quantity
+            )
+        # An unpaid order has no tickets yet, but mirror the expiry sweep defensively
+        Ticket.objects.filter(order=order, status=Ticket.Status.ACTIVE).update(
+            status=Ticket.Status.CANCELLED
+        )
+
+        order.status = Order.Status.CANCELLED
+        order.save(update_fields=["status"])
+
+        log_action(action="order_abandoned", actor=buyer, target=order)
+
+    return order

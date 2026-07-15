@@ -8,6 +8,7 @@ from .views import (
     OrderDetailView,
     OrderPayStatusView,
     OrderPayView,
+    OrderReleaseView,
 )
 
 urlpatterns = [
@@ -18,4 +19,5 @@ urlpatterns = [
     path("<uuid:pk>/confirm/", ConfirmOrderView.as_view(), name="confirm_order"),
     path("<uuid:pk>/pay/", OrderPayView.as_view(), name="order_pay"),
     path("<uuid:pk>/pay/status/", OrderPayStatusView.as_view(), name="order_pay_status"),
+    path("<uuid:pk>/release/", OrderReleaseView.as_view(), name="order_release"),
 ]
