@@ -15,6 +15,20 @@ class TicketSerializer(serializers.ModelSerializer):
     )
     owner = serializers.UUIDField(source="owner.id", read_only=True)
     owner_email = serializers.EmailField(source="owner.email", read_only=True)
+    qr_payload = serializers.SerializerMethodField()
+
+    def get_qr_payload(self, obj):
+        # Mesmo conteúdo assinado que o PNG gerado em Ticket.generate_qr_code;
+        # o frontend renderiza o QR a partir daqui (qr_code é só a URL da imagem)
+        import hashlib
+        import hmac
+
+        from django.conf import settings
+
+        sig = hmac.new(
+            settings.QR_SIGNING_KEY.encode(), str(obj.id).encode(), hashlib.sha256
+        ).hexdigest()[:16]
+        return f"{obj.id}:{sig}"
 
     class Meta:
         model = Ticket
@@ -30,6 +44,7 @@ class TicketSerializer(serializers.ModelSerializer):
             "owner",
             "owner_email",
             "qr_code",
+            "qr_payload",
             "status",
             "checked_in_at",
             "created_at",
