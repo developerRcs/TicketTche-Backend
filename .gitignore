@@ -57,3 +57,9 @@ Thumbs.db
 .env.prod
 .env.staging
 .env.local
+
+# Secret backups & env variants (FINDING-004, security report 2026-07-15)
+# Specific patterns so .envs/.env.prod.example stays tracked
+.env.prod.*
+*.bak
+*.overwritten*
